@@ -4,12 +4,104 @@ import numpy as np
 import plotly.express as px
 import time
 from pathlib import Path
+import pickle
+import os
+import joblib  # ADDED: For individual component caching
 
 # Import simplified modules
 from Bert_config import SimpleBERTEmbeddings
 from data_preprocessing import SimpleDataPreprocessor
 from Train_models import SimpleEmotionClassifiers
 from Model_evaluation import SimpleModelEvaluator
+
+# 🗄️ UPDATED CACHING FUNCTIONS
+def save_processed_data(X_train, X_test, y_train, y_test, dataset_name="demo"):
+    """Save processed data to cache"""
+    cache_dir = "demo_cache/"
+    os.makedirs(cache_dir, exist_ok=True)
+    
+    cache_data = {
+        'X_train': X_train,
+        'X_test': X_test, 
+        'y_train': y_train,
+        'y_test': y_test,
+        'dataset_name': dataset_name,
+        'timestamp': time.time()
+    }
+    
+    with open(f"{cache_dir}/processed_data_{dataset_name}.pkl", "wb") as f:
+        pickle.dump(cache_data, f)
+
+def save_trained_models(embeddings_train, embeddings_test, classifiers, bert_embedder, dataset_name="demo"):
+    """🔧 UPDATED: Save embeddings + individual model components"""
+    cache_dir = "demo_cache/"
+    os.makedirs(cache_dir, exist_ok=True)
+    
+    # Save embeddings (as before)
+    cache_data = {
+        'embeddings_train': embeddings_train,
+        'embeddings_test': embeddings_test,
+        'bert_model_name': bert_embedder.model_name,
+        'dataset_name': dataset_name,
+        'timestamp': time.time()
+    }
+    
+    with open(f"{cache_dir}/trained_models_{dataset_name}.pkl", "wb") as f:
+        pickle.dump(cache_data, f)
+    
+    # 🔧 NEW: Save individual model components using joblib
+    success, components = classifiers.save_model_components(dataset_name)
+    
+    return success, components
+
+def load_cached_processed_data(dataset_name="demo"):
+    """Load cached processed data"""
+    try:
+        cache_file = f"demo_cache/processed_data_{dataset_name}.pkl"
+        if os.path.exists(cache_file):
+            with open(cache_file, "rb") as f:
+                return pickle.load(f)
+    except Exception as e:
+        st.warning(f"Could not load cached data: {e}")
+    return None
+
+def load_cached_trained_models(dataset_name="demo"):
+    """Load cached trained models"""
+    try:
+        cache_file = f"demo_cache/trained_models_{dataset_name}.pkl"
+        if os.path.exists(cache_file):
+            with open(cache_file, "rb") as f:
+                return pickle.load(f)
+    except Exception as e:
+        st.warning(f"Could not load cached models: {e}")
+    return None
+
+def load_cached_model_components(classifiers, dataset_name="demo"):
+    """🔧 NEW: Load individual model components"""
+    try:
+        success, components = classifiers.load_model_components(dataset_name)
+        return success, components
+    except Exception as e:
+        st.warning(f"Could not load cached model components: {e}")
+        return False, []
+
+def get_cache_info():
+    """Show what's cached"""
+    cache_dir = "demo_cache/"
+    if not os.path.exists(cache_dir):
+        return []
+    
+    cached_files = []
+    for file in os.listdir(cache_dir):
+        if file.endswith('.pkl') or file.endswith('.joblib'):
+            file_path = os.path.join(cache_dir, file)
+            size_mb = os.path.getsize(file_path) / (1024*1024)
+            cached_files.append({
+                'file': file,
+                'size_mb': f"{size_mb:.1f} MB",
+                'modified': time.ctime(os.path.getmtime(file_path))
+            })
+    return cached_files
 
 # Essential emotion labels (27 emotions)
 EMOTION_LABELS = [
@@ -31,12 +123,12 @@ TEAM_NAMES = [
 
 # Page config
 st.set_page_config(
-    page_title="GoEmotions: Simple Emotion Detection",
+    page_title="GoEmotions: Emotion Detection and Prediction",
     layout="wide",
     page_icon="🎭"
 )
 
-# Original sophisticated CSS theme
+# CSS styling (same as before)
 ACCENT_START = "#22d3ee"
 ACCENT_MID = "#a78bfa" 
 ACCENT_END = "#f472b6"
@@ -158,6 +250,14 @@ st.markdown(
             border-color: #10b981;
             color: #ffffff !important;
         }}
+        .emotion-card {{
+            background: rgba(255,255,255,0.06);
+            border: 1px solid rgba(255,255,255,0.12);
+            border-radius: 12px;
+            padding: 1rem;
+            margin: 0.5rem 0;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+        }}
     </style>
     """,
     unsafe_allow_html=True,
@@ -181,7 +281,7 @@ if 'step' not in st.session_state:
 # Header with original sophisticated styling
 header_container = st.container()
 with header_container:
-    st.markdown('<div class="main-header">🎭 GoEmotions: Simple Emotion Detection</div>', unsafe_allow_html=True)
+    st.markdown('<div class="main-header">🎭 GoEmotions: Emotion Detection and Prediction</div>', unsafe_allow_html=True)
     
     # Team names as chips (original style)
     chips = " ".join([f"<span class='chip'>{name}</span>" for name in TEAM_NAMES])
@@ -189,30 +289,27 @@ with header_container:
     
     st.markdown(
         "<div style='color:#9ca3af; margin-top:6px; text-align: center;'>"
-        "<strong>🎯 Fixed System:</strong> Emotion detection with neutral bias correction &nbsp;|&nbsp; "
-        "<strong>Dataset:</strong> GoEmotions (27 labels) &nbsp;|&nbsp; "
-        "<strong>🚀 Improved:</strong> Better emotion balance and accuracy"
+        "<strong>🚀 SYSTEM:</strong> Individual component caching + optimized predictions &nbsp;|&nbsp; "
+        "<strong>📊 Performance:</strong> Precision, Recall, F-Measure, ROC-AUC &nbsp;|&nbsp; "
+        "<strong>🎯 Results:</strong> Top 3 emotion predictions"
         "</div>",
         unsafe_allow_html=True,
     )
 
-# Progress indicator with original glass styling
+# Progress indicator
 st.markdown("<div style='margin-top:1rem; margin-bottom: 1rem;'></div>", unsafe_allow_html=True)
 
-progress_steps = ["📁 Upload Data", "🔄 Process", "🤖 Train Models", "📊 Evaluate", "🎯 Predict"]
+progress_steps = ["Upload Data", "Process Data", "Train Model", "Evaluate Model", "Predict Emotion"]
 current_step = st.session_state.get('step', 1)
 
-# Create progress indicator with glass effect
+# Create progress indicator
 progress_html = "<div style='display: flex; justify-content: center; gap: 0.5rem; margin: 1rem 0;'>"
 for i, step_name in enumerate(progress_steps, 1):
     if i < current_step:
-        # Completed step
         progress_html += f"<div class='progress-step completed'>{step_name}</div>"
     elif i == current_step:
-        # Current step
         progress_html += f"<div class='progress-step active'>{step_name}</div>"
     else:
-        # Future step
         progress_html += f"<div class='progress-step'>{step_name}</div>"
 
 progress_html += "</div>"
@@ -222,9 +319,9 @@ st.divider()
 
 # Main interface based on current step
 if current_step == 1:
-    # Step 1: Data Upload with glass styling
+    # Step 1: Data Upload (REMOVED cache options - now in sidebar only)
     st.markdown('<div class="step-container">', unsafe_allow_html=True)
-    st.header("📁 Step 1: Upload Your Data")
+    st.header("Step 1: Upload Your Data")
     
     uploaded_file = st.file_uploader(
         "Upload GoEmotions CSV file",
@@ -237,7 +334,7 @@ if current_step == 1:
         if df is not None:
             st.session_state.df = df
             
-            # Show basic info in glass containers
+            # Show basic info
             col1, col2, col3 = st.columns(3)
             with col1:
                 st.metric("Total Samples", f"{len(df):,}")
@@ -248,13 +345,12 @@ if current_step == 1:
                 st.metric("Avg Text Length", f"{avg_length:.0f}")
             
             # Show preview
-            st.subheader("📋 Data Preview")
+            st.subheader("Data Preview")
             st.dataframe(df.head(), use_container_width=True)
             
-            # Emotion Frequency Chart with Bias Warning
-            st.subheader("📊 Emotion Distribution in Dataset")
+            # Emotion chart (same as before)
+            st.subheader("Emotion Distribution in Dataset")
             
-            # Calculate emotion frequencies
             emotion_counts = {}
             for emotion in EMOTION_LABELS:
                 if emotion in df.columns:
@@ -262,26 +358,23 @@ if current_step == 1:
                     emotion_counts[emotion] = count
             
             if emotion_counts:
-                # Create DataFrame for plotting
                 emotion_df = pd.DataFrame([
                     {'Emotion': emotion.title(), 'Count': count} 
                     for emotion, count in emotion_counts.items()
                 ]).sort_values('Count', ascending=False)
                 
-                # 🎯 CHECK FOR BIAS and show warning
                 neutral_count = emotion_counts.get('neutral', 0)
                 total_count = sum(emotion_counts.values())
                 neutral_percentage = (neutral_count / total_count) * 100 if total_count > 0 else 0
                 
                 if neutral_percentage > 40:
-                    st.error(f"⚠️ **CRITICAL BIAS DETECTED!** Neutral emotion represents {neutral_percentage:.1f}% of your data. This will severely impact model performance!")
+                    st.error(f"⚠️ **CRITICAL BIAS DETECTED!** Neutral emotion represents {neutral_percentage:.1f}% of your data.")
                     st.info("💡 **Don't worry!** Our system will automatically fix this in Step 2.")
                 elif neutral_percentage > 25:
-                    st.warning(f"⚠️ **Moderate bias detected.** Neutral emotion is {neutral_percentage:.1f}% of data. We'll balance this in Step 2.")
+                    st.warning(f"⚠️ **Moderate bias detected.** Neutral emotion is {neutral_percentage:.1f}% of data.")
                 else:
                     st.success(f"✅ **Good balance!** Neutral emotion is {neutral_percentage:.1f}% of data.")
                 
-                # Create bar chart
                 fig = px.bar(
                     emotion_df, 
                     x='Emotion', 
@@ -299,30 +392,6 @@ if current_step == 1:
                 )
                 
                 st.plotly_chart(fig, use_container_width=True)
-                
-                # Show top emotions with bias indicators
-                top_5_emotions = emotion_df.head(5)
-                st.subheader("🏆 Top 5 Most Common Emotions")
-                
-                for i, row in top_5_emotions.iterrows():
-                    percentage = (row['Count'] / len(df)) * 100
-                    
-                    # Add bias indicator
-                    if row['Emotion'].lower() == 'neutral' and percentage > 40:
-                        icon = "🔴"
-                        status = "High Bias"
-                    elif row['Emotion'].lower() == 'neutral' and percentage > 25:
-                        icon = "🟡"
-                        status = "Moderate Bias"
-                    else:
-                        icon = "✅"
-                        status = "Good"
-                    
-                    st.metric(
-                        f"{icon} #{i+1} {row['Emotion']}", 
-                        f"{row['Count']:,} samples",
-                        delta=f"{percentage:.1f}% - {status}"
-                    )
             
             if st.button("✅ Continue to Processing", type="primary"):
                 st.session_state.step = 2
@@ -331,13 +400,13 @@ if current_step == 1:
     st.markdown('</div>', unsafe_allow_html=True)
 
 elif current_step == 2:
-    # Step 2: Process Data with FIXED IMBALANCE HANDLING
+    # Step 2: Process Data (REMOVED main cache options)
     st.markdown('<div class="step-container">', unsafe_allow_html=True)
-    st.header("🔄 Step 2: Process Data")
+    st.header("Step 2: Process Data")
     
     if 'df' not in st.session_state:
         st.warning("Please upload data first")
-        if st.button("🔙 Back to Upload"):
+        if st.button("Back to Upload"):
             st.session_state.step = 1
             st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
@@ -346,13 +415,13 @@ elif current_step == 2:
         df = st.session_state.df
         st.write(f"📊 Working with {len(df):,} samples")
         
-        # 🎯 KEY ADDITION: Imbalance Fixing Controls
-        st.subheader("⚖️ Fix Emotion Imbalance (Recommended)")
+        # Emotion imbalance controls
+        st.subheader("Fix Emotion Imbalance (Recommended)")
         
         col1, col2 = st.columns(2)
         with col1:
             fix_imbalance = st.checkbox(
-                "🎯 **Fix Neutral Emotion Bias**", 
+                "**Fix Neutral Emotion Bias**", 
                 value=True,
                 help="Highly recommended: Reduces neutral samples and balances emotions"
             )
@@ -360,7 +429,7 @@ elif current_step == 2:
             if fix_imbalance:
                 max_neutral = st.slider(
                     "Max Neutral Samples", 
-                    min_value=3000, 
+                    min_value=300, 
                     max_value=15000, 
                     value=8000,
                     help="Limit neutral samples to reduce bias"
@@ -397,13 +466,11 @@ elif current_step == 2:
                     st.metric("Bias Level", "🟢 Good", help="Balanced dataset")
         
         # Process button
-        process_button = st.button("🚀 Process Data", type="primary", key="process_btn")
+        process_button = st.button("Process Data", type="primary", key="process_btn")
         
-        # Process data when button is clicked
         if process_button:
             with st.spinner("Processing data with imbalance fixing..."):
                 try:
-                    # 🎯 Pass imbalance fixing parameters
                     X_train, X_test, y_train, y_test = preprocessor.process_data(
                         df, 
                         sample_size=sample_size,
@@ -411,7 +478,6 @@ elif current_step == 2:
                     )
                     
                     if X_train is not None and X_test is not None:
-                        # Store in session state
                         st.session_state.X_train = X_train
                         st.session_state.X_test = X_test
                         st.session_state.y_train = y_train
@@ -421,7 +487,6 @@ elif current_step == 2:
                         st.success("✅ Data processed successfully with bias correction!")
                         st.balloons()
                         
-                        # Show results
                         col1, col2, col3 = st.columns(3)
                         with col1:
                             st.metric("Training Samples", len(X_train))
@@ -430,7 +495,6 @@ elif current_step == 2:
                         with col3:
                             st.metric("Ready for Training", "✅")
                         
-                        # AUTO-ADVANCE TO NEXT STEP
                         st.info("🚀 **Auto-advancing to Step 3 in 2 seconds...**")
                         time.sleep(2)
                         st.session_state.step = 3
@@ -442,120 +506,57 @@ elif current_step == 2:
                 except Exception as e:
                     st.error(f"❌ Error: {str(e)}")
         
-        # ALWAYS show continue button if data exists
-        st.divider()
-        st.subheader("📋 Current Status")
-        
+        # Continue button if data exists
         if all(key in st.session_state for key in ['X_train', 'X_test', 'y_train', 'y_test']):
+            st.divider()
             st.success("✅ Data is processed and ready for training!")
             
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("Training Samples", len(st.session_state.X_train))
-            with col2:
-                st.metric("Test Samples", len(st.session_state.X_test))
-            with col3:
-                st.metric("Status", "Ready ✅")
-            
-            # BIG PROMINENT BUTTON
-            st.markdown("### 🎯 Ready to Train Models!")
-            
-            # Multiple ways to continue
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("🤖 **CONTINUE TO TRAINING**", type="primary", key="continue_big"):
-                    st.session_state.step = 3
-                    st.success("Moving to Step 3...")
-                    st.rerun()
-            
-            with col2:
-                if st.button("🚀 Skip to Training Now", key="skip_to_training"):
-                    st.session_state.step = 3
-                    st.rerun()
-        
-        else:
-            st.info("⏳ Process your data first using the button above")
+            if st.button("**CONTINUE TO TRAINING**", type="primary", key="continue_big"):
+                st.session_state.step = 3
+                st.success("Moving to Step 3...")
+                st.rerun()
         
         st.markdown('</div>', unsafe_allow_html=True)
 
 elif current_step == 3:
-    # Step 3: Train Models - SAME AS BEFORE (already good)
+    # Step 3: Train Models (REMOVED main cache options - now in sidebar)
     st.markdown('<div class="step-container">', unsafe_allow_html=True)
-    st.header("🤖 Step 3: Train Models")
+    st.header("Step 3: Train Models")
     
-    # Check if we have the required data
     if not all(key in st.session_state for key in ['X_train', 'X_test', 'y_train', 'y_test']):
         st.warning("Please process data first")
-        if st.button("🔙 Back to Processing"):
+        if st.button("Back to Processing"):
             st.session_state.step = 2
             st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
         
     else:
-        st.write(f"📊 Ready to train with {len(st.session_state.X_train):,} training samples")
+        st.write(f"Ready to train with {len(st.session_state.X_train):,} training samples")
         
-        # Model Selection Section
-        st.subheader("🎛️ Model Configuration")
+        # Model Selection (same as before)
+        st.subheader("Model Configuration")
         
-        # Model selection dropdown
         model_options = {
             'bert-base-uncased': {
                 'name': 'BERT Base Uncased (Recommended)',
-                'description': '✅ **Best for emotion detection** - Optimized for social media text',
-                'pros': '• Perfect for Reddit/social media text\n• Proven 75-85% accuracy on emotion tasks\n• Fast training (12 layers, 768 dimensions)\n• Memory efficient\n• Research-proven baseline',
-                'cons': '• None significant for this task'
+                'description': '**Best for emotion detection** - Optimized for social media text',
             },
             'bert-large-uncased': {
                 'name': 'BERT Large Uncased',
-                'description': '⚠️ **Slower but slightly more accurate** - 2x computational cost',
-                'pros': '• ~3% better accuracy potential\n• More parameters (24 layers, 1024 dimensions)',
-                'cons': '• 2x slower training\n• Requires more memory\n• Marginal improvement for emotion tasks'
+                'description': '**Slower but slightly more accurate** - 2x computational cost',
             },
-            'distilbert-base-uncased': {
-                'name': 'DistilBERT Base Uncased',
-                'description': '⚡ **Fastest option** - Good for quick prototyping',
-                'pros': '• 40% faster training\n• Lower memory requirements\n• Good for testing',
-                'cons': '• ~5% lower accuracy\n• Less robust for complex emotions'
-            },
-            'roberta-base': {
-                'name': 'RoBERTa Base',
-                'description': '🔬 **Research alternative** - Often better but slower',
-                'pros': '• Sometimes better performance\n• Robust to different text types',
-                'cons': '• Much slower training\n• More complex tokenization\n• Overkill for this task'
-            }
         }
         
         selected_model = st.selectbox(
             "Choose BERT Model:",
             options=list(model_options.keys()),
-            index=0,  # Default to bert-base-uncased
+            index=0,
             format_func=lambda x: model_options[x]['name']
         )
         
-        # Show model details
-        model_info = model_options[selected_model]
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            st.markdown(f"**Selected:** {model_info['description']}")
-            st.markdown(f"**Advantages:**\n{model_info['pros']}")
-        
-        with col2:
-            st.markdown(f"**Considerations:**\n{model_info['cons']}")
-            
-            if selected_model == 'bert-base-uncased':
-                st.success("🏆 **Recommended Choice!** Perfect balance of speed and accuracy for emotion detection.")
-            elif selected_model == 'bert-large-uncased':
-                st.warning("⚠️ Will take 2x longer to train. Only use if you need maximum accuracy.")
-            elif selected_model == 'distilbert-base-uncased':
-                st.info("⚡ Good for quick testing, but accuracy may be lower.")
-            else:
-                st.info("🔬 Advanced option. May not provide better results for emotion detection.")
-        
-        # Update the embedder with selected model
+        # Update embedder
         if selected_model != bert_embedder.model_name:
             bert_embedder.model_name = selected_model
-            # Clear any previously loaded model
             bert_embedder.model = None
             bert_embedder.tokenizer = None
         
@@ -563,86 +564,74 @@ elif current_step == 3:
         
         # Check if models are already trained
         if st.session_state.get('models_trained', False):
-            # Models already trained - show results and continue button
-            st.success("✅ Models have been trained successfully!")
+            st.success("Models have been trained successfully!")
             
-            # Show training results
-            if all(key in st.session_state for key in ['X_train_embeddings', 'X_test_embeddings', 'classifiers']):
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("BERT Model", selected_model)
-                    st.metric("Embedding Dimension", "768" if 'base' in selected_model else "1024")
-                with col2:
-                    st.metric("Training Samples", len(st.session_state.X_train_embeddings))
-                    st.metric("Test Samples", len(st.session_state.X_test_embeddings))
-                with col3:
-                    st.metric("Models Trained", "2")
-                    st.metric("Status", "✅ Ready")
-            
-            # Big prominent button to continue
-            st.markdown("### 📊 Ready for Model Evaluation")
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("📊 **CONTINUE TO EVALUATION**", type="primary", key="proceed_to_evaluation"):
-                    st.session_state.step = 4
-                    st.rerun()
-            
-            with col2:
-                if st.button("🚀 Skip to Evaluation Now", key="skip_to_evaluation"):
-                    st.session_state.step = 4
-                    st.rerun()
-            
-            # Option to retrain
-            if st.button("🔄 Retrain Models", key="retrain_models"):
-                st.session_state.models_trained = False
-                # Clear old training data
-                for key in ['X_train_embeddings', 'X_test_embeddings', 'classifiers', 'bert_embedder']:
-                    if key in st.session_state:
-                        del st.session_state[key]
+            if st.button("**CONTINUE TO EVALUATION**", type="primary", key="proceed_to_evaluation"):
+                st.session_state.step = 4
                 st.rerun()
         
         else:
-            # Models not yet trained - show training interface
-            st.write(f"Ready to train **{model_info['name']}** and classification models:")
+            # FIXED: Show memory usage estimate before training
+            if 'X_train' in st.session_state:
+                num_samples = len(st.session_state.X_train)
+                memory_est = bert_embedder.estimate_memory_usage(num_samples)
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.metric("Training Samples", f"{num_samples:,}")
+                    st.metric("Estimated Memory", f"{memory_est['total_mb']:.0f} MB")
+                
+                with col2:
+                    if memory_est['warning']:
+                        st.error("⚠️ High memory usage expected")
+                        st.write("Consider using smaller dataset")
+                    else:
+                        st.success("✅ Memory usage acceptable")
+                    st.write(f"💡 {memory_est['recommendation']}")
             
             train_button = st.button("🚀 Start Training", type="primary", key="start_training_btn")
             
-            # Start training when button is clicked
             if train_button:
                 progress_bar = st.progress(0)
                 status = st.empty()
                 
                 try:
-                    # Step 3.1: Generate BERT embeddings
-                    status.text(f"Loading {selected_model} model...")
-                    success = bert_embedder.load_model()
-                    if not success:
-                        st.error("❌ Failed to load BERT model")
-                        st.stop()
+                    # Check if we have cached embeddings
+                    embeddings_already_cached = hasattr(st.session_state, 'X_train_embeddings') and hasattr(st.session_state, 'X_test_embeddings')
                     
-                    progress_bar.progress(20)
+                    if embeddings_already_cached:
+                        st.info("⚡ Using cached embeddings - training classifiers only...")
+                        X_train_embeddings = st.session_state.X_train_embeddings
+                        X_test_embeddings = st.session_state.X_test_embeddings
+                        progress_bar.progress(60)
+                    else:
+                        # Generate BERT embeddings
+                        status.text(f"Loading {selected_model} model...")
+                        success = bert_embedder.load_model()
+                        if not success:
+                            st.error("Failed to load BERT model")
+                            st.stop()
+                        
+                        progress_bar.progress(20)
+                        
+                        status.text("Generating training embeddings...")
+                        X_train_embeddings = bert_embedder.generate_embeddings(st.session_state.X_train)
+                        if X_train_embeddings is None:
+                            st.error("Failed to generate training embeddings")
+                            st.stop()
+                        
+                        progress_bar.progress(40)
+                        
+                        status.text("Generating test embeddings...")
+                        X_test_embeddings = bert_embedder.generate_embeddings(st.session_state.X_test)
+                        if X_test_embeddings is None:
+                            st.error("Failed to generate test embeddings")
+                            st.stop()
+                        
+                        progress_bar.progress(60)
                     
-                    status.text("Generating training embeddings...")
-                    X_train_embeddings = bert_embedder.generate_embeddings(st.session_state.X_train)
-                    
-                    if X_train_embeddings is None:
-                        st.error("❌ Failed to generate training embeddings")
-                        st.stop()
-                    
-                    progress_bar.progress(40)
-                    
-                    status.text("Generating test embeddings...")
-                    X_test_embeddings = bert_embedder.generate_embeddings(st.session_state.X_test)
-                    
-                    if X_test_embeddings is None:
-                        st.error("❌ Failed to generate test embeddings")
-                        st.stop()
-                    
-                    progress_bar.progress(60)
-                    
-                    # Step 3.2: Train models
-                    status.text("Training Naive Bayes with class balancing...")
+                    # Train models
+                    status.text("Training Naive Bayes with GaussianNB + PCA...")
                     nb_success = classifiers.train_naive_bayes(X_train_embeddings, st.session_state.y_train)
                     
                     progress_bar.progress(80)
@@ -657,15 +646,15 @@ elif current_step == 3:
                     st.session_state.X_test_embeddings = X_test_embeddings
                     st.session_state.classifiers = classifiers
                     st.session_state.bert_embedder = bert_embedder
-                    st.session_state.models_trained = True  # Set completion flag
-                    st.session_state.selected_model = selected_model  # Store selected model
+                    st.session_state.models_trained = True
+                    st.session_state.selected_model = selected_model
                     
                     status.text("✅ Training completed!")
-                    st.success("🎉 Models trained successfully with bias correction!")
+                    st.success("🎉 Models trained successfully!")
                     st.balloons()
                     
                     # Show training summary
-                    st.subheader("📋 Training Summary")
+                    st.subheader("Training Summary")
                     col1, col2, col3 = st.columns(3)
                     
                     with col1:
@@ -679,67 +668,32 @@ elif current_step == 3:
                     with col3:
                         models_trained = []
                         if nb_success:
-                            models_trained.append("Naive Bayes")
+                            models_trained.append("GaussianNB + PCA")
                         if rf_success:
                             models_trained.append("Random Forest")
                         st.metric("Models Trained", len(models_trained))
-                        st.metric("Status", "✅ Ready")
+                        st.metric("Status", "Ready")
                     
-                    # AUTO-ADVANCE TO NEXT STEP
                     st.info("📊 **Auto-advancing to Step 4 in 2 seconds...**")
                     time.sleep(2)
                     st.session_state.step = 4
                     st.rerun()
                     
                 except Exception as e:
-                    st.error(f"❌ Training failed: {str(e)}")
+                    st.error(f"Training failed: {str(e)}")
                     st.exception(e)
-        
-        # ALWAYS show continue button if models exist
-        st.divider()
-        st.subheader("📋 Current Status")
-        
-        if all(key in st.session_state for key in ['X_train_embeddings', 'X_test_embeddings', 'classifiers']):
-            st.success("✅ Models are trained and ready for evaluation!")
-            
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("Embeddings Generated", "✅")
-            with col2:
-                st.metric("Models Trained", "✅")
-            with col3:
-                st.metric("Status", "Ready for Evaluation")
-            
-            # BIG PROMINENT BUTTON
-            st.markdown("### 🎯 Ready to Evaluate Performance!")
-            
-            # Multiple ways to continue
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("📊 **CONTINUE TO EVALUATION**", type="primary", key="continue_eval_big"):
-                    st.session_state.step = 4
-                    st.success("Moving to Step 4...")
-                    st.rerun()
-            
-            with col2:
-                if st.button("🚀 Skip to Evaluation", key="skip_eval_now"):
-                    st.session_state.step = 4
-                    st.rerun()
-        
-        else:
-            st.info("⏳ Train your models first using the button above")
         
         st.markdown('</div>', unsafe_allow_html=True)
 
 elif current_step == 4:
-    # Step 4: Evaluate Models with FIXED EVALUATION
+    # Step 4: Evaluate Models (same as before)
     st.markdown('<div class="step-container">', unsafe_allow_html=True)
-    st.header("📊 Step 4: Evaluate Models")
+    st.header("Step 4: Evaluate Models")
     
     if all(key in st.session_state for key in ['X_test_embeddings', 'y_test', 'classifiers']):
         
-        if st.button("📊 Evaluate Models", type="primary"):
-            with st.spinner("Evaluating models with bias-aware metrics..."):
+        if st.button("Evaluate Models", type="primary"):
+            with st.spinner("Evaluating models with all required metrics..."):
                 results = evaluator.evaluate_models(
                     st.session_state.classifiers,
                     st.session_state.X_test_embeddings,
@@ -749,68 +703,59 @@ elif current_step == 4:
                 if results:
                     st.session_state.results = results
                     
-                    # 🎯 NEW: Show the improved performance summary
                     summary_data = evaluator.display_performance_summary(results)
                     
-                    # Show recommendations
-                    st.subheader("💡 Recommendations")
+                    st.subheader("Model Recommendations")
                     recommendations = evaluator.get_model_recommendations(results)
                     for recommendation in recommendations:
                         st.write(recommendation)
                     
-                    # Show metrics explanation
                     evaluator.explain_metrics()
                     
-                    # Show which model is best for predictions
                     if summary_data and len(summary_data) > 1:
-                        best_model_data = max(summary_data, key=lambda x: float(x['Composite Score'].rstrip('%')))
+                        best_model_data = max(summary_data, key=lambda x: float(x['Accuracy'].rstrip('%')))
                         best_model_name = best_model_data['Model'].lower().replace(' ', '_')
                         st.session_state.best_model_for_prediction = best_model_name
                         
                         st.success(f"🏆 **{best_model_data['Model']}** will be used for predictions")
                     else:
-                        # Default to random forest if only one model or comparison fails
                         st.session_state.best_model_for_prediction = 'random_forest'
                     
-                    if st.button("✅ Continue to Predictions", type="primary"):
+                    if st.button("Continue to Predictions", type="primary"):
                         st.session_state.step = 5
                         st.rerun()
     else:
         st.warning("Please train models first")
-        if st.button("🔙 Back to Training"):
+        if st.button("Back to Training"):
             st.session_state.step = 3
             st.rerun()
     
     st.markdown('</div>', unsafe_allow_html=True)
 
 elif current_step == 5:
-    # Step 5: Make Predictions with IMPROVED PREDICTIONS
+    # Step 5: Make Predictions (🎯 UPDATED: Show top 3 emotions nicely)
     st.markdown('<div class="step-container">', unsafe_allow_html=True)
-    st.header("🎯 Step 5: Make Predictions")
+    st.header("Step 5: Make Predictions")
     
     if all(key in st.session_state for key in ['classifiers', 'bert_embedder']):
         
-        # Determine best model to use
         best_model = st.session_state.get('best_model_for_prediction', 'random_forest')
         
-        # Show best model info
         if 'results' in st.session_state:
             best_model_display = best_model.replace('_', ' ').title()
             
             if best_model in st.session_state.results:
                 metrics = st.session_state.results[best_model]
-                composite_score = evaluator.calculate_performance_percentage(metrics)
-                balance_score = metrics.get('balance_score', 0) * 100
+                hamming_accuracy = metrics.get('hamming_accuracy', 0) * 100
+                roc_auc = metrics.get('roc_auc', 0) * 100
                 
                 st.info(f"🏆 Using best model: **{best_model_display}** "
-                       f"(Composite Score: {composite_score:.1f}%, Balance Score: {balance_score:.1f}%)")
+                       f"(Accuracy: {hamming_accuracy:.1f}%, ROC-AUC: {roc_auc:.1f}%)")
             else:
                 st.info(f"🤖 Using model: **{best_model_display}**")
-        else:
-            st.info(f"🤖 Using model: **{best_model.replace('_', ' ').title()}**")
         
-        # Prediction tabs with original styling
-        tab1, tab2 = st.tabs(["📝 Single Text", "📁 Batch Upload"])
+        # Prediction tabs
+        tab1, tab2 = st.tabs(["📝 Single Text", "📄 Batch Upload"])
         
         with tab1:
             st.subheader("📝 Single Text Prediction")
@@ -839,56 +784,95 @@ elif current_step == 5:
             
             if st.button("🎯 Predict Emotions", type="primary"):
                 if text_input.strip():
-                    with st.spinner("Analyzing emotions with bias-corrected model..."):
+                    with st.spinner("Analyzing emotions..."):
                         results = classifiers.predict_single_text(
                             text_input, 
                             st.session_state.bert_embedder,
-                            model_type=best_model
+                            model_type=best_model,
+                            threshold=0.3
                         )
                         
-                        if results:
-                            st.subheader("🎭 Predicted Emotions")
+                        if results and 'top_3_emotions' in results:
+                            st.subheader("🎭 Top 3 Predicted Emotions")
                             
-                            # Sort emotions by confidence
-                            sorted_emotions = sorted(results.items(), key=lambda x: x[1], reverse=True)
-                            
-                            # Show top emotions with confidence bars
-                            for emotion, confidence in sorted_emotions[:5]:  # Top 5
-                                confidence_pct = confidence * 100
+                            # 🎯 UPDATED: Show top 3 emotions in nice cards
+                            for i, (emotion, prob) in enumerate(zip(results['top_3_emotions'], results['top_3_probabilities'])):
+                                rank = i + 1
+                                confidence_pct = prob * 100
                                 
-                                # Color coding based on confidence
-                                if confidence_pct >= 50:
-                                    color = "🟢"
-                                elif confidence_pct >= 30:
-                                    color = "🟡"
+                                # Medal icons
+                                if rank == 1:
+                                    icon = "🥇"
+                                    color = "#FFD700"
+                                elif rank == 2:
+                                    icon = "🥈" 
+                                    color = "#C0C0C0"
                                 else:
-                                    color = "🔶"
+                                    icon = "🥉"
+                                    color = "#CD7F32"
                                 
-                                # Create a simple progress bar using streamlit
-                                col1, col2 = st.columns([3, 1])
-                                with col1:
-                                    st.write(f"{color} **{emotion.title()}**")
-                                    st.progress(confidence)
-                                with col2:
-                                    st.metric("", f"{confidence_pct:.1f}%")
+                                # Create emotion card
+                                st.markdown(f"""
+                                <div class="emotion-card" style="border-left: 4px solid {color};">
+                                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                                        <div>
+                                            <h4>{icon} #{rank} {emotion.title()}</h4>
+                                            <p style="margin: 0; color: #9ca3af;">Confidence: {confidence_pct:.1f}%</p>
+                                        </div>
+                                        <div style="font-size: 2rem; opacity: 0.7;">{confidence_pct:.0f}%</div>
+                                    </div>
+                                </div>
+                                """, unsafe_allow_html=True)
+                                
+                                # Progress bar
+                                st.progress(prob, text=f"{emotion.title()}: {confidence_pct:.1f}%")
                             
-                            # Show emotional insight
-                            top_emotion = sorted_emotions[0][0]
-                            top_confidence = sorted_emotions[0][1] * 100
+                            # Show insight based on top emotion
+                            top_emotion = results['top_3_emotions'][0]
+                            top_confidence = results['top_3_probabilities'][0] * 100
                             
                             if top_confidence >= 60:
-                                insight = f"Strong {top_emotion} emotion detected!"
+                                insight = f"Strong **{top_emotion}** emotion detected! The model is quite confident."
                             elif top_confidence >= 40:
-                                insight = f"Moderate {top_emotion} emotion detected."
+                                insight = f"Moderate **{top_emotion}** emotion detected with reasonable confidence."
                             else:
-                                insight = f"Weak {top_emotion} signal. Text may be emotionally neutral or mixed."
+                                insight = f"Weak **{top_emotion}** signal. The text may be emotionally neutral or contain mixed emotions."
                             
-                            st.info(f"🧠 **Insight**: {insight}")
+                            st.info(f"🧠 **Analysis**: {insight}")
+                            
+                            # Show emotion distribution chart
+                            if len(results['top_3_emotions']) >= 3:
+                                emotion_df = pd.DataFrame({
+                                    'Emotion': [e.title() for e in results['top_3_emotions']],
+                                    'Confidence': [p*100 for p in results['top_3_probabilities']]
+                                })
+                                
+                                fig = px.bar(
+                                    emotion_df,
+                                    x='Emotion',
+                                    y='Confidence',
+                                    title="Top 3 Emotion Predictions",
+                                    color='Confidence',
+                                    color_continuous_scale='viridis'
+                                )
+                                
+                                fig.update_layout(
+                                    template="plotly_dark",
+                                    paper_bgcolor="rgba(0,0,0,0)",
+                                    plot_bgcolor="rgba(0,0,0,0)",
+                                    height=400
+                                )
+                                
+                                st.plotly_chart(fig, use_container_width=True)
+                        
+                        else:
+                            st.error("Failed to analyze emotions. Please try again.")
                 else:
                     st.warning("Please enter some text")
         
         with tab2:
-            st.subheader("📁 Batch File Prediction")
+            # Batch upload (same as before)
+            st.subheader("📄 Batch File Prediction")
             
             uploaded_file = st.file_uploader(
                 "Upload CSV file with 'text' column",
@@ -901,35 +885,33 @@ elif current_step == 5:
                     df = pd.read_csv(uploaded_file)
                     
                     if 'text' not in df.columns:
-                        st.error("❌ File must contain a 'text' column")
+                        st.error("File must contain a 'text' column")
                     else:
-                        st.success(f"✅ Loaded {len(df):,} texts for prediction")
+                        st.success(f"Loaded {len(df):,} texts for prediction")
                         st.dataframe(df.head(), use_container_width=True)
                         
-                        if st.button("🚀 Process Batch", type="primary"):
-                            with st.spinner(f"Processing {len(df):,} texts with bias-corrected model..."):
-                                # Process batch
+                        if st.button("Process Batch", type="primary"):
+                            with st.spinner(f"Processing {len(df):,} texts..."):
                                 results_df = classifiers.predict_batch(
                                     df, 
                                     st.session_state.bert_embedder,
-                                    model_type=best_model
+                                    model_type=best_model,
+                                    threshold=0.25
                                 )
                                 
                                 if results_df is not None:
                                     st.success(f"✅ Processed {len(results_df):,} texts!")
                                     
-                                    # Show first 50 results
-                                    st.subheader("📊 First 50 Results")
+                                    # Show results
+                                    st.subheader("First 50 Results")
                                     display_df = results_df.head(50).copy()
                                     
-                                    # Format for display
                                     if 'text' in display_df.columns:
                                         display_df['text'] = display_df['text'].apply(lambda x: x[:80] + "..." if len(str(x)) > 80 else x)
                                     
                                     if 'confidence' in display_df.columns:
                                         display_df['confidence'] = display_df['confidence'].apply(lambda x: f"{x*100:.1f}%")
                                     
-                                    # Select columns to display
                                     display_columns = ['text', 'top_emotion', 'confidence', 'top_3_emotions']
                                     available_columns = [col for col in display_columns if col in display_df.columns]
                                     
@@ -939,7 +921,7 @@ elif current_step == 5:
                                         st.dataframe(display_df, use_container_width=True)
                                     
                                     # Download section
-                                    st.subheader("💾 Download Results")
+                                    st.subheader("Download Results")
                                     col1, col2 = st.columns(2)
                                     
                                     with col1:
@@ -953,7 +935,6 @@ elif current_step == 5:
                                         )
                                     
                                     with col2:
-                                        # Create summary
                                         summary = {
                                             'Total_Processed': len(results_df),
                                             'Most_Common_Emotion': results_df['top_emotion'].mode().iloc[0] if 'top_emotion' in results_df.columns else 'N/A',
@@ -968,26 +949,28 @@ elif current_step == 5:
                                             file_name="emotion_summary.csv",
                                             mime="text/csv"
                                         )
+                                else:
+                                    st.error("❌ Batch prediction failed")
                 
                 except Exception as e:
                     st.error(f"❌ Error processing file: {str(e)}")
     else:
         st.warning("Please complete evaluation first")
-        if st.button("🔙 Back to Evaluation"):
+        if st.button("Back to Evaluation"):
             st.session_state.step = 4
             st.rerun()
     
     st.markdown('</div>', unsafe_allow_html=True)
 
-# Sidebar with original sophisticated styling
+# 🔧 UPDATED SIDEBAR: Cache options moved here + component caching
 with st.sidebar:
     st.header("📊 System Status")
     
     status_items = [
-        ("📁 Data Loaded", 'df' in st.session_state),
-        ("🔄 Data Processed", 'data_processed' in st.session_state and st.session_state.data_processed),
-        ("🤖 Models Trained", 'models_trained' in st.session_state and st.session_state.models_trained),
-        ("📊 Models Evaluated", 'results' in st.session_state)
+        ("Data Loaded", 'df' in st.session_state),
+        ("Data Processed", 'data_processed' in st.session_state and st.session_state.data_processed),
+        ("Models Trained", 'models_trained' in st.session_state and st.session_state.models_trained),
+        ("Models Evaluated", 'results' in st.session_state)
     ]
     
     for label, status in status_items:
@@ -1005,139 +988,151 @@ with st.sidebar:
     st.progress(progress)
     st.write(f"**{completed_steps}/{total_steps} steps completed**")
     
-    # Next step guidance
-    if completed_steps < total_steps:
-        next_steps = [
-            "📁 Upload data in Step 1",
-            "🔄 Process data in Step 2", 
-            "🤖 Train models in Step 3",
-            "📊 Evaluate in Step 4"
-        ]
-        
-        st.subheader("Next Step")
-        st.info(next_steps[completed_steps])
-    else:
-        st.success("🎉 All steps completed! Ready for predictions.")
-    
     st.divider()
     
-    # Show bias correction status
-    if 'df' in st.session_state and 'neutral' in st.session_state.df.columns:
-        st.header("⚖️ Bias Status")
+    # 🔧 UPDATED: Cache Management moved to sidebar with component caching
+    st.header("💾 Cache Management")
+    
+    cache_info = get_cache_info()
+    if cache_info:
+        st.success(f"📁 {len(cache_info)} cached files")
         
-        # Original bias
-        original_neutral = (st.session_state.df['neutral'] == 1).sum()
-        original_total = len(st.session_state.df)
-        original_pct = (original_neutral / original_total) * 100
+        with st.expander("📁 View Cache Details"):
+            for info in cache_info:
+                file_type = "📦 Model Component" if info['file'].endswith('.joblib') else "📊 Data"
+                st.write(f"{file_type} **{info['file']}**")
+                st.caption(f"Size: {info['size_mb']} | Modified: {info['modified']}")
         
-        if original_pct > 40:
-            st.error(f"🔴 Original: {original_pct:.1f}% neutral")
-        elif original_pct > 25:
-            st.warning(f"🟡 Original: {original_pct:.1f}% neutral")
-        else:
-            st.success(f"🟢 Original: {original_pct:.1f}% neutral")
+        # Cache options
+        col1, col2 = st.columns(2)
         
-        if st.session_state.get('data_processed', False):
-            st.success("✅ Bias correction applied!")
-    
-    st.divider()
-    
-    # Show selected model if available
-    if 'selected_model' in st.session_state:
-        st.header("🤖 Current Model")
-        model_name = st.session_state.selected_model
-        st.success(f"✅ {model_name}")
-        
-        if model_name == 'bert-base-uncased':
-            st.caption("🏆 Recommended choice!")
-        elif model_name == 'bert-large-uncased':
-            st.caption("🔬 High accuracy mode")
-        elif model_name == 'distilbert-base-uncased':
-            st.caption("⚡ Fast mode")
-        else:
-            st.caption("🔬 Advanced mode")
-    
-    st.divider()
-    
-    # Manual step navigation (for debugging/troubleshooting)
-    st.header("🔧 Manual Navigation")
-    st.caption("Use this if you get stuck between steps")
-    
-    current_step_num = st.session_state.get('step', 1)
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("← Previous Step") and current_step_num > 1:
-            st.session_state.step = current_step_num - 1
-            st.rerun()
-    
-    with col2:
-        if st.button("Next Step →") and current_step_num < 5:
-            # Check if we can advance
-            can_advance = False
-            if current_step_num == 1 and 'df' in st.session_state:
-                can_advance = True
-            elif current_step_num == 2 and st.session_state.get('data_processed', False):
-                can_advance = True
-            elif current_step_num == 3 and st.session_state.get('models_trained', False):
-                can_advance = True
-            elif current_step_num == 4 and 'results' in st.session_state:
-                can_advance = True
-            else:
-                can_advance = True  # Allow manual override
+        with col1:
+            # Load cached data
+            cached_data = load_cached_processed_data("demo")
+            if cached_data:
+                if st.button("⚡ Load Data", help="Load cached processed data"):
+                    st.session_state.X_train = cached_data['X_train']
+                    st.session_state.X_test = cached_data['X_test']
+                    st.session_state.y_train = cached_data['y_train']
+                    st.session_state.y_test = cached_data['y_test']
+                    st.session_state.data_processed = True
+                    st.success("⚡ Data loaded!")
+                    st.rerun()
             
-            if can_advance:
-                st.session_state.step = current_step_num + 1
-                st.rerun()
-            else:
-                st.warning("⚠️ Complete current step first")
-    
-    st.write(f"Current Step: {current_step_num}/5")
+            # Load cached models
+            cached_models = load_cached_trained_models("demo")
+            if cached_models:
+                if st.button("⚡ Load Embeddings", help="Load cached BERT embeddings"):
+                    st.session_state.X_train_embeddings = cached_models['embeddings_train']
+                    st.session_state.X_test_embeddings = cached_models['embeddings_test']
+                    st.session_state.selected_model = cached_models['bert_model_name']
+                    st.success("⚡ Embeddings loaded!")
+        
+        with col2:
+            # Load cached model components
+            if st.button("⚡ Load Models", help="Load cached trained models"):
+                success, components = load_cached_model_components(classifiers, "demo")
+                if success and components:
+                    st.success(f"⚡ Loaded: {', '.join(components)}")
+                    st.session_state.models_trained = True
+                else:
+                    st.warning("No model components found")
+            
+            # Save current models  
+            if hasattr(st.session_state, 'classifiers') and st.session_state.get('models_trained', False):
+                if st.button("💾 Save Models", help="Save current trained models"):
+                    success, components = save_trained_models(
+                        st.session_state.get('X_train_embeddings'),
+                        st.session_state.get('X_test_embeddings'),
+                        st.session_state.classifiers,
+                        st.session_state.bert_embedder,
+                        "demo"
+                    )
+                    if success:
+                        st.success(f"💾 Saved: {', '.join(components)}")
+        
+        # FIXED: Enhanced cache management with safety checks
+        if st.button("🧹 Clear All Cache", help="Delete all cached files"):
+            try:
+                import shutil
+                if os.path.exists("demo_cache/"):
+                    # Clear BERT model from memory first
+                    if hasattr(st.session_state, 'bert_embedder'):
+                        st.session_state.bert_embedder.clear_model()
+                    
+                    shutil.rmtree("demo_cache/")
+                    st.success("🗑️ Cache cleared!")
+                    
+                    # Clear session state related to cache
+                    cache_keys = ['X_train_embeddings', 'X_test_embeddings', 'models_trained']
+                    for key in cache_keys:
+                        if key in st.session_state:
+                            del st.session_state[key]
+                    
+                    st.rerun()
+                else:
+                    st.info("No cache to clear")
+            except Exception as e:
+                st.error(f"Error clearing cache: {e}")
+    else:
+        st.info("📁 No cache files found")
+        
+        # Show save options for current data
+        if hasattr(st.session_state, 'X_train'):
+            if st.button("💾 Save Current Data"):
+                save_processed_data(
+                    st.session_state.X_train,
+                    st.session_state.X_test,
+                    st.session_state.y_train,
+                    st.session_state.y_test,
+                    "demo"
+                )
+                st.success("💾 Data saved!")
     
     st.divider()
     
-    # Model performance with improved metrics
+    # Model performance (same as before)
     if hasattr(st.session_state, 'results') and st.session_state.results:
         st.header("🏆 Model Performance")
         results = st.session_state.results
         
         for model_name, metrics in results.items():
-            composite_score = evaluator.calculate_performance_percentage(metrics)
-            balance_score = metrics.get('balance_score', 0) * 100
-            emotion_f1 = metrics.get('non_neutral_f1', 0) * 100
+            hamming_accuracy = metrics.get('hamming_accuracy', 0) * 100
+            roc_auc = metrics.get('roc_auc', 0) * 100
             
-            if composite_score >= 80 and balance_score >= 70:
+            if hamming_accuracy >= 75:
                 status_icon = "🟢"
                 status_text = "Excellent"
-            elif composite_score >= 70 and balance_score >= 60:
+            elif hamming_accuracy >= 65:
                 status_icon = "🟡"
                 status_text = "Good"
-            elif emotion_f1 >= 50:
+            else:
                 status_icon = "🟠"
                 status_text = "Fair"
-            else:
-                status_icon = "🔴"
-                status_text = "Needs Work"
             
             st.write(f"**{model_name.replace('_', ' ').title()}**")
-            st.write(f"{status_icon} {composite_score:.1f}% {status_text}")
-            st.write(f"   Balance: {balance_score:.1f}%")
+            st.write(f"{status_icon} {hamming_accuracy:.1f}% {status_text}")
+            st.write(f"   ROC-AUC: {roc_auc:.1f}%")
     
     st.divider()
     
-    # Quick stats
-    if 'df' in st.session_state:
-        st.header("📈 Quick Stats")
-        df = st.session_state.df
-        st.metric("Dataset Size", f"{len(df):,}")
-        st.metric("Emotions", "27")
-        if hasattr(st.session_state, 'X_train_embeddings'):
-            embedding_dim = "768" if 'base' in st.session_state.get('selected_model', 'bert-base-uncased') else "1024"
-            st.metric("Embedding Dim", embedding_dim)
+    # Manual navigation
+    st.header("🔧 Manual Navigation")
+    current_step_num = st.session_state.get('step', 1)
     
-    st.divider()
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("← Previous") and current_step_num > 1:
+            st.session_state.step = current_step_num - 1
+            st.rerun()
     
-    # Reset button with original styling
+    with col2:
+        if st.button("Next →") and current_step_num < 5:
+            st.session_state.step = current_step_num + 1
+            st.rerun()
+    
+    st.write(f"Step: {current_step_num}/5")
+    
     if st.button("🔄 Start Over"):
         for key in list(st.session_state.keys()):
             if key != 'step':
@@ -1145,13 +1140,12 @@ with st.sidebar:
         st.session_state.step = 1
         st.rerun()
 
-# Footer with original sophisticated styling
+# Footer
 st.divider()
 st.markdown(
     "<div class='footer'>"
-    "<p><strong>🎯 GoEmotions: Bias-Corrected Emotion Detection System</strong></p>"
-    "<p>Built with Streamlit + BERT + Scikit-learn | "
-    "Fixed Neutral Bias | Improved Emotion Balance | Production-Ready Predictions</p>"
+    "<p><strong>🎯 GoEmotions: Enhanced Emotion Detection System</strong></p>"
+    "<p>Individual Component Caching | Top 3 Emotion Predictions | All Required Metrics</p>"
     "</div>",
     unsafe_allow_html=True
 )

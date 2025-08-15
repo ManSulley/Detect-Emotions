@@ -146,20 +146,20 @@ class SimpleDataPreprocessor:
 
     def show_preprocessing_options(self):
         """Show preprocessing options with simple accuracy checkbox"""
-        st.subheader("🔧 Text Preprocessing Options")
+        st.subheader("Text Preprocessing Options")
         
         # Simple accuracy checkbox at the top
         bert_optimized = st.checkbox(
-            "🏆 **Use BERT-Optimized Preprocessing (Higher Accuracy)**", 
+            "**Use BERT-Optimized Preprocessing (Higher Accuracy)**", 
             value=True,  # Default to high accuracy
             help="Recommended: Minimal preprocessing for maximum BERT performance"
         )
         
         if bert_optimized:
             # Show what BERT optimization means
-            st.success("✅ **High Accuracy Mode**: Keeps stop words, punctuation, and natural text")
-            st.info("📈 **Expected Result**: 5-15% higher accuracy than standard NLP preprocessing")
-            st.info("🔧 **What we keep**: 'not', 'very', punctuation (!?.), original case, natural word forms")
+            st.success("**High Accuracy Mode**: Keeps stop words, punctuation, and natural text")
+            st.info("**Expected Result**: 5-15% higher accuracy than standard NLP preprocessing")
+            st.info("**What we keep**: 'not', 'very', punctuation (!?.), original case, natural word forms")
             
             return {
                 'remove_stopwords': False,
@@ -172,8 +172,8 @@ class SimpleDataPreprocessor:
         
         else:
             # Standard NLP options
-            st.warning("⚠️ **Standard NLP Mode**: May reduce BERT accuracy by 5-15%")
-            st.info("🔬 **Use this for**: Traditional ML models or research comparison")
+            st.warning("**Standard NLP Mode**: May reduce BERT accuracy by 5-15%")
+            st.info("**Use this for**: Traditional ML models or research comparison")
             
             col1, col2 = st.columns(2)
             
@@ -207,7 +207,7 @@ class SimpleDataPreprocessor:
 
     def show_preprocessing_preview(self, df, preprocessing_options):
         """Show 5 clear examples of text preprocessing"""
-        st.subheader("👀 Text Preprocessing Preview (5 Examples)")
+        st.subheader("Text Preprocessing Preview (5 Examples)")
         
         # Always take exactly 5 samples
         sample_texts = df['text'].head(5).tolist()
@@ -258,8 +258,8 @@ class SimpleDataPreprocessor:
             st.metric("Word Reduction", f"{reduction:.1f}%")
 
     def fix_emotion_imbalance(self, df, max_neutral_samples=8000, min_emotion_samples=500):
-        """🎯 SIMPLE FIX for neutral emotion bias - the key solution!"""
-        st.subheader("⚖️ Fixing Emotion Imbalance")
+        """SIMPLE FIX for neutral emotion bias - the key solution!"""
+        st.subheader("Fixing Emotion Imbalance")
         
         original_counts = {}
         for emotion in self.emotion_columns:
@@ -267,7 +267,7 @@ class SimpleDataPreprocessor:
                 original_counts[emotion] = (df[emotion] == 1).sum()
         
         # Show original distribution
-        st.write("📊 **Original Distribution:**")
+        st.write("**Original Distribution:**")
         col1, col2, col3 = st.columns(3)
         with col1:
             st.metric("Neutral", f"{original_counts.get('neutral', 0):,}")
@@ -289,7 +289,7 @@ class SimpleDataPreprocessor:
         # 1. Limit neutral samples
         if len(neutral_df) > max_neutral_samples:
             neutral_df = neutral_df.sample(n=max_neutral_samples, random_state=42)
-            st.success(f"✅ Reduced neutral from {original_counts['neutral']:,} to {max_neutral_samples:,}")
+            st.success(f"Reduced neutral from {original_counts['neutral']:,} to {max_neutral_samples:,}")
         else:
             st.info(f"ℹ️ Keeping all {len(neutral_df):,} neutral samples")
         
@@ -319,7 +319,7 @@ class SimpleDataPreprocessor:
         balanced_df = pd.concat(fixed_dfs, ignore_index=True).drop_duplicates().sample(frac=1, random_state=42)
         
         # Show results
-        st.write("🎯 **After Balancing:**")
+        st.write("**After Balancing:**")
         new_counts = {}
         for emotion in self.emotion_columns:
             if emotion in balanced_df.columns:
@@ -339,7 +339,7 @@ class SimpleDataPreprocessor:
                      delta=f"{len(balanced_df) - len(df):+,}")
         
         if emotion_boosts:
-            st.success("✅ **Boosted rare emotions:**")
+            st.success("**Boosted rare emotions:**")
             for emotion, boost in emotion_boosts.items():
                 st.write(f"   • {emotion.title()}: {boost}")
         
@@ -366,7 +366,7 @@ class SimpleDataPreprocessor:
             # 🎯 KEY FIX: Handle imbalance FIRST
             if fix_imbalance and 'neutral' in df.columns:
                 df = self.fix_emotion_imbalance(df)
-                st.success(f"✅ Fixed emotion imbalance! New dataset size: {len(df):,}")
+                st.success(f"Fixed emotion imbalance! New dataset size: {len(df):,}")
             
             # Sample data if needed AFTER balancing
             if sample_size and sample_size < len(df):
@@ -381,11 +381,11 @@ class SimpleDataPreprocessor:
             
             # Clean text
             df = df.copy()
-            st.write("🔄 Applying text preprocessing...")
+            st.write("Applying text preprocessing...")
             
             # Choose cleaning method based on settings
             if preprocessing_options.get('bert_optimized', False):
-                st.success("🏆 Using BERT-optimized preprocessing for higher accuracy")
+                st.success("Using BERT-optimized preprocessing for higher accuracy")
                 df['cleaned_text'] = df['text'].apply(self.clean_text_for_bert)
             else:
                 # Show what preprocessing steps are being applied
@@ -402,7 +402,7 @@ class SimpleDataPreprocessor:
                     active_steps.append("Stemming")
                 
                 if active_steps:
-                    st.warning(f"⚠️ Using standard NLP: {', '.join(active_steps)} (may reduce BERT accuracy)")
+                    st.warning(f"Using standard NLP: {', '.join(active_steps)} (may reduce BERT accuracy)")
                 else:
                     st.info("ℹ️ Using minimal preprocessing")
                 
@@ -420,9 +420,9 @@ class SimpleDataPreprocessor:
             
             # Show preprocessing results
             if preprocessing_options.get('bert_optimized', False):
-                st.success(f"✅ Applied BERT-optimized preprocessing to {len(df):,} samples")
+                st.success(f"Applied BERT-optimized preprocessing to {len(df):,} samples")
             else:
-                st.success(f"✅ Applied standard NLP preprocessing to {len(df):,} samples")
+                st.success(f"Applied standard NLP preprocessing to {len(df):,} samples")
             
             # Prepare features and labels
             X = df['cleaned_text'].values
@@ -441,7 +441,7 @@ class SimpleDataPreprocessor:
                 X_train, X_test, y_train, y_test = train_test_split(
                     X, y, test_size=0.2, random_state=42, stratify=dominant_emotions
                 )
-                st.success("✅ Used stratified split to maintain emotion balance")
+                st.success("Used stratified split to maintain emotion balance")
                 
             except:
                 # Fallback to regular split if stratification fails

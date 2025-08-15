@@ -1,18 +1,21 @@
 import numpy as np
 import pandas as pd
 import streamlit as st
-from sklearn.naive_bayes import MultinomialNB
+from sklearn.naive_bayes import GaussianNB  # FIXED: Use GaussianNB for continuous BERT embeddings
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.multioutput import MultiOutputClassifier
-from sklearn.preprocessing import MinMaxScaler
+from sklearn.decomposition import PCA  # ADDED: For dimensionality reduction
 from sklearn.pipeline import Pipeline
 from sklearn.utils.class_weight import compute_class_weight
 import time
+import joblib
+import os
 
 class SimpleEmotionClassifiers:
     def __init__(self):
         self.nb_classifier = None
         self.rf_classifier = None
+        self.pca = None  # ADDED: For dimensionality reduction
         
         self.emotion_labels = [
             'admiration', 'amusement', 'anger', 'annoyance', 'approval', 'caring',
@@ -23,205 +26,207 @@ class SimpleEmotionClassifiers:
         ]
     
     def compute_emotion_weights(self, y):
-        """🎯 Compute class weights for each emotion to handle imbalance"""
+        """Compute class weights for each emotion to handle imbalance"""
         weights_per_emotion = {}
         
         for i, emotion in enumerate(self.emotion_labels):
-            emotion_column = y[:, i]
-            unique_classes = np.unique(emotion_column)
-            
-            if len(unique_classes) > 1:
-                # Compute weights for this emotion
-                class_weights = compute_class_weight(
-                    'balanced', 
-                    classes=unique_classes, 
-                    y=emotion_column
-                )
-                weights_per_emotion[emotion] = dict(zip(unique_classes, class_weights))
-            else:
-                # Only one class present
-                weights_per_emotion[emotion] = {unique_classes[0]: 1.0}
+            if i < y.shape[1]:
+                emotion_column = y[:, i]
+                unique_classes = np.unique(emotion_column)
+                
+                if len(unique_classes) > 1:
+                    # Compute weights for this emotion
+                    class_weights = compute_class_weight(
+                        'balanced', 
+                        classes=unique_classes, 
+                        y=emotion_column
+                    )
+                    weights_per_emotion[emotion] = dict(zip(unique_classes, class_weights))
+                else:
+                    # Only one class present
+                    weights_per_emotion[emotion] = {unique_classes[0]: 1.0}
         
         return weights_per_emotion
     
     def train_naive_bayes(self, X, y):
-        """Train Naive Bayes with balanced class weights"""
+        """FIXED: Train Naive Bayes with optimized PCA and GaussianNB for BERT embeddings"""
         try:
-            st.write("🧠 Training Naive Bayes with class balancing...")
+            st.write("Training Naive Bayes with optimized PCA and Gaussian distribution...")
             
-            # Compute class weights
-            emotion_weights = self.compute_emotion_weights(y)
+            # FIXED: Optimize PCA components based on explained variance
+            n_samples, n_features = X.shape
             
-            # Create individual classifiers with class weights
-            classifiers = []
-            for i, emotion in enumerate(self.emotion_labels):
-                emotion_column = y[:, i]
+            # Choose PCA components more intelligently
+            if n_features > 500:
+                # For BERT embeddings (768 dims), use explained variance approach
+                pca_test = PCA(n_components=0.95, random_state=42)  # Keep 95% variance
+                pca_test.fit(X)
+                optimal_components = pca_test.n_components_
                 
-                # Get weights for this emotion
-                weights = emotion_weights.get(emotion, {0: 1.0, 1: 1.0})
-                
-                # Create classifier with computed weights
-                if len(np.unique(emotion_column)) > 1:
-                    # Create sample weights
-                    sample_weights = np.array([weights.get(label, 1.0) for label in emotion_column])
-                    
-                    # Use smoothed alpha for better performance
-                    nb = MultinomialNB(alpha=0.1)
-                    
-                    # Create pipeline with scaling
-                    pipeline = Pipeline([
-                        ('scaler', MinMaxScaler()),
-                        ('classifier', nb)
-                    ])
-                    
-                    # Fit with sample weights
-                    pipeline.fit(X, emotion_column, classifier__sample_weight=sample_weights)
-                    classifiers.append(pipeline)
-                else:
-                    # Handle case where emotion has only one class
-                    from sklearn.dummy import DummyClassifier
-                    dummy = DummyClassifier(strategy='constant', constant=emotion_column[0])
-                    dummy.fit(X, emotion_column)
-                    classifiers.append(dummy)
+                # But cap it for performance
+                optimal_components = min(optimal_components, 200, n_features // 3)
+            else:
+                optimal_components = min(100, n_features // 2)
             
-            # Create custom multi-output wrapper
-            class BalancedMultiOutputNB:
-                def __init__(self, classifiers, emotion_labels):
-                    self.classifiers = classifiers
-                    self.emotion_labels = emotion_labels
-                
-                def predict(self, X):
-                    predictions = []
-                    for clf in self.classifiers:
-                        pred = clf.predict(X)
-                        predictions.append(pred)
-                    return np.array(predictions).T
-                
-                def predict_proba(self, X):
-                    probabilities = []
-                    for clf in self.classifiers:
-                        if hasattr(clf, 'predict_proba'):
-                            proba = clf.predict_proba(X)
-                            if proba.shape[1] == 2:
-                                probabilities.append(proba[:, 1])  # Positive class
-                            else:
-                                probabilities.append(proba[:, 0])
-                        else:
-                            # Dummy classifier
-                            pred = clf.predict(X)
-                            probabilities.append(pred.astype(float))
-                    return np.array(probabilities).T
+            self.pca = PCA(n_components=optimal_components, random_state=42)
+            X_reduced = self.pca.fit_transform(X)
             
-            self.nb_classifier = BalancedMultiOutputNB(classifiers, self.emotion_labels)
+            # Show PCA effectiveness
+            explained_variance = self.pca.explained_variance_ratio_.sum()
+            st.info(f"📉 PCA: {n_features} → {optimal_components} features (keeping {explained_variance:.1%} variance)")
             
-            st.success("✅ Naive Bayes trained with class balancing")
+            # FIXED: Use GaussianNB instead of MultinomialNB for continuous features
+            nb = GaussianNB(
+                var_smoothing=1e-8  # Small smoothing for numerical stability
+            )
+            
+            # Use MultiOutputClassifier
+            classifier = MultiOutputClassifier(nb, n_jobs=-1)
+            
+            # Fit the model with reduced features
+            start_time = time.time()
+            classifier.fit(X_reduced, y)
+            training_time = time.time() - start_time
+            
+            self.nb_classifier = classifier
+            
+            st.success(f"✅ Naive Bayes trained with optimized PCA + GaussianNB ({training_time:.1f}s)")
             return True
             
         except Exception as e:
             st.error(f"Error training Naive Bayes: {str(e)}")
+            st.exception(e)
             return False
     
     def train_random_forest(self, X, y):
-        """🎯 Train Random Forest with optimized settings for emotion imbalance"""
+        """FIXED: Train Random Forest with adaptive settings based on dataset size"""
         try:
-            st.write("🌲 Training Random Forest with imbalance handling...")
+            n_samples, n_features = X.shape
+            st.write(f"Training Random Forest with adaptive settings for {n_samples:,} samples...")
+            
+            # FIXED: Adaptive hyperparameters based on dataset size
+            if n_samples > 50000:
+                # Large dataset settings
+                n_estimators = 100  # Fewer trees for speed
+                max_depth = 12
+                min_samples_split = 10
+                min_samples_leaf = 5
+                st.info("🔧 Using large dataset settings (faster training)")
+            elif n_samples > 10000:
+                # Medium dataset settings
+                n_estimators = 150
+                max_depth = 15
+                min_samples_split = 5
+                min_samples_leaf = 2
+                st.info("🔧 Using medium dataset settings (balanced)")
+            else:
+                # Small dataset settings
+                n_estimators = 200  # More trees for better performance
+                max_depth = 20
+                min_samples_split = 2
+                min_samples_leaf = 1
+                st.info("🔧 Using small dataset settings (higher performance)")
             
             # Create Random Forest with balanced class weights and optimized parameters
             rf = RandomForestClassifier(
-                n_estimators=150,          # More trees for better performance
-                max_depth=15,              # Deeper trees for emotion complexity
-                min_samples_split=5,       # Prevent overfitting
-                min_samples_leaf=2,        # Prevent overfitting
+                n_estimators=n_estimators,
+                max_depth=max_depth,
+                min_samples_split=min_samples_split,
+                min_samples_leaf=min_samples_leaf,
                 class_weight='balanced',   # 🎯 KEY: Handle class imbalance
                 random_state=42,
                 n_jobs=-1,
                 bootstrap=True,
                 max_features='sqrt',       # Good default for classification
-                criterion='gini'           # Better for imbalanced data
+                criterion='gini',          # Better for imbalanced data
+                warm_start=False,
+                oob_score=True            # Out-of-bag score for validation
             )
             
             # Use MultiOutputClassifier with balanced settings
-            classifier = MultiOutputClassifier(
-                rf, 
-                n_jobs=-1
-            )
+            classifier = MultiOutputClassifier(rf, n_jobs=-1)
             
-            # Fit the model
+            # Fit the model with progress tracking
+            start_time = time.time()
             classifier.fit(X, y)
+            training_time = time.time() - start_time
+            
             self.rf_classifier = classifier
             
-            # Show feature importance for top emotions if possible
+            # FIXED: Show OOB score if available
             try:
-                feature_importances = []
-                for i, estimator in enumerate(classifier.estimators_):
-                    if hasattr(estimator, 'feature_importances_'):
-                        importance = np.mean(estimator.feature_importances_)
-                        feature_importances.append((self.emotion_labels[i], importance))
-                
-                # Show top 3 most important emotions
-                feature_importances.sort(key=lambda x: x[1], reverse=True)
-                top_emotions = feature_importances[:3]
-                
-                st.info("🎯 Top emotions by model importance:")
-                for emotion, importance in top_emotions:
-                    st.write(f"   • {emotion.title()}: {importance:.3f}")
-                    
+                if hasattr(classifier.estimators_[0], 'oob_score_'):
+                    avg_oob = np.mean([est.oob_score_ for est in classifier.estimators_])
+                    st.info(f"📊 Average OOB Score: {avg_oob:.3f} (higher is better)")
             except:
-                pass  # Skip if feature importance extraction fails
+                pass
             
-            st.success("✅ Random Forest trained with class balancing")
+            st.success(f"✅ Random Forest trained with adaptive settings ({training_time:.1f}s)")
             return True
             
         except Exception as e:
             st.error(f"Error training Random Forest: {str(e)}")
+            st.exception(e)
             return False
     
-    def predict_single_text(self, text, bert_embedder, model_type='random_forest'):
-        """🎯 Predict emotions with confidence threshold filtering"""
+    def predict_single_text(self, text, bert_embedder, model_type='random_forest', threshold=0.5):
+        """FIXED: Predict emotions with improved probability handling and error recovery"""
         try:
             # Generate embedding
             embedding = bert_embedder.get_single_embedding(text)
             if embedding is None:
+                st.error("Failed to generate embedding for text")
                 return None
             
             # Reshape for prediction
             embedding = embedding.reshape(1, -1)
             
-            # Make prediction
-            if model_type == 'naive_bayes' and self.nb_classifier:
-                probabilities = self.nb_classifier.predict_proba(embedding)[0]
-            elif model_type == 'random_forest' and self.rf_classifier:
-                probabilities = self.rf_classifier.predict_proba(embedding)
-                # Handle MultiOutputClassifier format
-                if isinstance(probabilities, list):
-                    proba_values = []
-                    for emotion_proba in probabilities:
-                        if emotion_proba.shape[1] == 2:  # Binary classifier
-                            proba_values.append(emotion_proba[0, 1])  # Positive class
-                        else:
-                            proba_values.append(emotion_proba[0, 0])  # Single value
-                    probabilities = np.array(proba_values)
+            # Make prediction with error handling
+            try:
+                if model_type == 'naive_bayes' and self.nb_classifier:
+                    # FIXED: Apply PCA transformation for NB
+                    if self.pca is not None:
+                        embedding = self.pca.transform(embedding)
+                    probabilities = self.nb_classifier.predict_proba(embedding)
+                elif model_type == 'random_forest' and self.rf_classifier:
+                    probabilities = self.rf_classifier.predict_proba(embedding)
                 else:
-                    probabilities = probabilities[0]
-            else:
-                st.error("Model not available")
+                    st.error(f"Model {model_type} not available or not trained")
+                    return None
+                    
+            except Exception as pred_error:
+                st.error(f"Prediction error: {str(pred_error)}")
                 return None
             
-            # 🎯 KEY FIX: Apply confidence threshold to reduce neutral bias
-            CONFIDENCE_THRESHOLD = 0.3  # Only show emotions with >30% confidence
+            # FIXED: Handle MultiOutputClassifier probability format properly
+            if isinstance(probabilities, list):
+                # Extract positive class probabilities
+                emotion_probs = []
+                for i, emotion_proba in enumerate(probabilities):
+                    if i < len(self.emotion_labels):
+                        if emotion_proba.shape[1] == 2:  # Binary classifier
+                            emotion_probs.append(emotion_proba[0, 1])  # Positive class probability
+                        else:
+                            emotion_probs.append(emotion_proba[0, 0])  # Single value
+                probabilities = np.array(emotion_probs)
+            else:
+                probabilities = probabilities[0]
             
-            # Create emotion-probability dictionary
-            results = {}
-            for emotion, prob in zip(self.emotion_labels, probabilities):
-                # Apply threshold, but always include at least the top emotion
-                if prob >= CONFIDENCE_THRESHOLD or emotion == self.emotion_labels[np.argmax(probabilities)]:
-                    results[emotion] = float(prob)
+            # Ensure we have the right number of probabilities
+            probabilities = probabilities[:len(self.emotion_labels)]
             
-            # If no emotions meet threshold, show top 3
-            if len(results) == 0:
-                top_3_idx = np.argsort(probabilities)[-3:][::-1]
-                for idx in top_3_idx:
-                    results[self.emotion_labels[idx]] = float(probabilities[idx])
+            # FIXED: Get top 3 emotions with proper confidence scores
+            top_3_indices = np.argsort(probabilities)[-3:][::-1]
+            top_3_emotions = [self.emotion_labels[i] for i in top_3_indices]
+            top_3_probabilities = [float(probabilities[i]) for i in top_3_indices]
+            
+            # Create comprehensive results
+            results = {
+                'top_3_emotions': top_3_emotions,
+                'top_3_probabilities': top_3_probabilities,
+                'all_probabilities': {emotion: float(prob) for emotion, prob in zip(self.emotion_labels, probabilities)},
+                'threshold_met': any(prob >= threshold for prob in top_3_probabilities)
+            }
             
             return results
             
@@ -229,167 +234,169 @@ class SimpleEmotionClassifiers:
             st.error(f"Error in single text prediction: {str(e)}")
             return None
     
-    def predict_batch(self, df, bert_embedder, model_type='random_forest'):
-        """🎯 Predict emotions for batch with improved confidence handling"""
+    def predict_batch(self, df, bert_embedder, model_type='random_forest', threshold=0.3):
+        """FIXED: Predict emotions for batch with enhanced error handling and progress tracking"""
         try:
             if 'text' not in df.columns:
                 st.error("DataFrame must contain 'text' column")
                 return None
             
+            # Clean and prepare texts
             texts = df['text'].tolist()
-            
-            # Remove empty texts
             texts = [str(text).strip() for text in texts if text and str(text).strip()]
             
             if not texts:
                 st.error("No valid texts found after cleaning")
                 return None
             
+            st.info(f"Processing {len(texts)} texts with {model_type.replace('_', ' ').title()}...")
+            
+            # FIXED: Show memory estimate for large batches
+            if len(texts) > 10000:
+                memory_est = bert_embedder.estimate_memory_usage(len(texts))
+                st.warning(f"⚠️ Large batch: ~{memory_est['total_mb']:.0f}MB memory needed. {memory_est['recommendation']}")
+            
+            # Generate embeddings for all texts
+            embeddings = bert_embedder.generate_embeddings(texts)
+            if embeddings is None:
+                st.error("Failed to generate embeddings")
+                return None
+            
+            # Make predictions with progress tracking
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            
+            try:
+                status_text.text("Making predictions...")
+                
+                if model_type == 'naive_bayes' and self.nb_classifier:
+                    # FIXED: Apply PCA transformation for NB
+                    if self.pca is not None:
+                        status_text.text("Applying PCA transformation...")
+                        embeddings = self.pca.transform(embeddings)
+                    batch_probabilities = self.nb_classifier.predict_proba(embeddings)
+                elif model_type == 'random_forest' and self.rf_classifier:
+                    batch_probabilities = self.rf_classifier.predict_proba(embeddings)
+                else:
+                    st.error(f"Model {model_type} not available")
+                    return None
+                
+                progress_bar.progress(0.5)
+                
+            except Exception as e:
+                st.error(f"Prediction error: {str(e)}")
+                return None
+            
+            # FIXED: Process predictions properly with error handling
             results = []
             
-            # Progress tracking
-            progress_bar = st.progress(0)
-            
-            # Process in smaller batches
-            batch_size = 50
-            total_batches = (len(texts) + batch_size - 1) // batch_size
-            
-            for batch_idx in range(0, len(texts), batch_size):
-                batch_texts = texts[batch_idx:batch_idx + batch_size]
+            try:
+                status_text.text("Processing predictions...")
                 
-                # Generate embeddings for batch
-                embeddings = bert_embedder.generate_embeddings(batch_texts)
-                if embeddings is None:
-                    st.error(f"Failed to generate embeddings for batch {batch_idx//batch_size + 1}")
-                    continue
+                # Handle MultiOutputClassifier format
+                if isinstance(batch_probabilities, list):
+                    # Convert list of arrays to matrix
+                    proba_matrix = np.zeros((len(texts), len(self.emotion_labels)))
+                    for i, emotion_proba in enumerate(batch_probabilities):
+                        if i < len(self.emotion_labels):
+                            if emotion_proba.shape[1] == 2:  # Binary classifier
+                                proba_matrix[:, i] = emotion_proba[:, 1]  # Positive class
+                            else:
+                                proba_matrix[:, i] = emotion_proba[:, 0]  # Single value
+                else:
+                    proba_matrix = batch_probabilities
                 
-                # Make predictions
-                try:
-                    if model_type == 'naive_bayes' and self.nb_classifier:
-                        batch_probabilities = self.nb_classifier.predict_proba(embeddings)
-                    elif model_type == 'random_forest' and self.rf_classifier:
-                        batch_probabilities = self.rf_classifier.predict_proba(embeddings)
-                    else:
-                        st.error(f"Model {model_type} not available")
-                        return None
-                    
-                except Exception as e:
-                    st.error(f"Prediction error in batch {batch_idx//batch_size + 1}: {str(e)}")
-                    continue
+                progress_bar.progress(0.75)
                 
-                # Process predictions
-                try:
-                    if isinstance(batch_probabilities, list):
-                        # MultiOutputClassifier returns list of arrays
-                        proba_matrix = np.array([
-                            [proba[:, 1] if proba.shape[1] > 1 else proba[:, 0] for proba in batch_probabilities]
-                        ]).T
-                    else:
-                        proba_matrix = batch_probabilities
-                    
-                except Exception as e:
-                    st.error(f"Error processing probabilities: {str(e)}")
-                    continue
-                
-                # 🎯 KEY FIX: Apply confidence threshold and emotion filtering
-                CONFIDENCE_THRESHOLD = 0.25  # Lower threshold for batch processing
-                
-                # Process each text in batch
-                for i, (text, probabilities) in enumerate(zip(batch_texts, proba_matrix)):
+                # Process each text with error handling
+                successful_predictions = 0
+                for i, (text, probabilities) in enumerate(zip(texts, proba_matrix)):
                     try:
+                        # Ensure probabilities are valid
+                        if np.any(np.isnan(probabilities)) or np.any(np.isinf(probabilities)):
+                            st.warning(f"Invalid probabilities for text {i}, skipping...")
+                            continue
+                        
                         # Find emotions above threshold
-                        above_threshold = probabilities >= CONFIDENCE_THRESHOLD
+                        above_threshold_mask = probabilities >= threshold
+                        above_threshold_emotions = np.where(above_threshold_mask)[0]
                         
-                        if np.any(above_threshold):
-                            # Use emotions above threshold
-                            filtered_probs = probabilities.copy()
-                            filtered_probs[~above_threshold] = 0
-                            top_idx = np.argmax(filtered_probs)
+                        if len(above_threshold_emotions) > 0:
+                            # Use highest emotion above threshold
+                            best_idx = above_threshold_emotions[np.argmax(probabilities[above_threshold_emotions])]
                         else:
-                            # If no emotions above threshold, use highest
-                            top_idx = np.argmax(probabilities)
+                            # Use highest overall emotion
+                            best_idx = np.argmax(probabilities)
                         
-                        top_emotion = self.emotion_labels[top_idx]
-                        top_confidence = float(probabilities[top_idx])
+                        top_emotion = self.emotion_labels[best_idx]
+                        top_confidence = float(probabilities[best_idx])
                         
-                        # Get top 3 emotions above threshold or top 3 overall
-                        if np.sum(above_threshold) >= 3:
-                            candidate_indices = np.where(above_threshold)[0]
-                            candidate_probs = probabilities[candidate_indices]
-                            top_3_candidate_idx = np.argsort(candidate_probs)[-3:][::-1]
-                            top_3_idx = candidate_indices[top_3_candidate_idx]
-                        else:
-                            top_3_idx = np.argsort(probabilities)[-3:][::-1]
-                        
+                        # Get top 3 emotions
+                        top_3_idx = np.argsort(probabilities)[-3:][::-1]
                         top_3_emotions = [self.emotion_labels[idx] for idx in top_3_idx]
                         top_3_scores = [float(probabilities[idx]) for idx in top_3_idx]
                         
-                        # 🎯 Additional filtering: Don't show neutral if it's weak and other emotions exist
-                        if (top_emotion == 'neutral' and 
-                            top_confidence < 0.6 and 
-                            len([s for s in top_3_scores if s > 0.2]) > 1):
-                            # Find best non-neutral emotion
-                            non_neutral_mask = np.array([e != 'neutral' for e in self.emotion_labels])
-                            non_neutral_probs = probabilities.copy()
-                            non_neutral_probs[~non_neutral_mask] = 0
-                            if np.max(non_neutral_probs) > 0.15:  # If there's a decent non-neutral emotion
-                                top_idx = np.argmax(non_neutral_probs)
-                                top_emotion = self.emotion_labels[top_idx]
-                                top_confidence = float(probabilities[top_idx])
-                        
                         results.append({
-                            'original_index': batch_idx + i,
-                            'text': text,
+                            'text': text[:100] + "..." if len(text) > 100 else text,
                             'top_emotion': top_emotion,
                             'confidence': top_confidence,
                             'top_3_emotions': ', '.join(top_3_emotions),
                             'top_3_scores': ', '.join([f"{score:.3f}" for score in top_3_scores])
                         })
                         
+                        successful_predictions += 1
+                        
                     except Exception as e:
-                        st.error(f"Error processing text {i}: {str(e)}")
+                        st.warning(f"Error processing text {i}: {str(e)}")
                         continue
                 
-                # Update progress
-                current_progress = min(1.0, (batch_idx + batch_size) / len(texts))
-                progress_bar.progress(current_progress)
-            
-            progress_bar.progress(1.0)
+                progress_bar.progress(1.0)
+                status_text.text(f"✅ Completed: {successful_predictions}/{len(texts)} successful predictions")
+                
+            except Exception as e:
+                st.error(f"Error processing batch results: {str(e)}")
+                return None
             
             if not results:
-                st.error("No results generated")
+                st.error("No results generated - check your text data and model")
                 return None
             
             # Create results DataFrame
             results_df = pd.DataFrame(results)
             
-            # 🎯 Show quick emotion distribution summary
+            # Show emotion distribution with enhanced statistics
             emotion_dist = results_df['top_emotion'].value_counts()
-            st.subheader("📊 Predicted Emotion Distribution")
+            st.subheader("🎭 Predicted Emotion Distribution")
             
-            col1, col2, col3 = st.columns(3)
+            col1, col2, col3, col4 = st.columns(4)
             with col1:
-                if 'neutral' in emotion_dist:
-                    neutral_pct = (emotion_dist['neutral'] / len(results_df)) * 100
-                    st.metric("Neutral", f"{neutral_pct:.1f}%")
-                else:
-                    st.metric("Neutral", "0%")
+                total_results = len(results_df)
+                st.metric("Total Processed", f"{total_results:,}")
             
             with col2:
-                non_neutral_count = len(results_df[results_df['top_emotion'] != 'neutral'])
-                non_neutral_pct = (non_neutral_count / len(results_df)) * 100
-                st.metric("Other Emotions", f"{non_neutral_pct:.1f}%")
-            
-            with col3:
                 avg_confidence = results_df['confidence'].mean()
                 st.metric("Avg Confidence", f"{avg_confidence:.1%}")
             
-            # Show top emotions
-            st.write("🏆 **Top 5 Predicted Emotions:**")
+            with col3:
+                unique_emotions = results_df['top_emotion'].nunique()
+                st.metric("Unique Emotions", unique_emotions)
+            
+            with col4:
+                success_rate = (len(results_df) / len(texts)) * 100
+                st.metric("Success Rate", f"{success_rate:.1f}%")
+            
+            # Show top emotions with better formatting
+            st.write("**🏆 Top 5 Predicted Emotions:**")
             top_5_emotions = emotion_dist.head(5)
             for emotion, count in top_5_emotions.items():
                 pct = (count / len(results_df)) * 100
-                st.write(f"   • {emotion.title()}: {count:,} samples ({pct:.1f}%)")
+                st.write(f"   • **{emotion.title()}**: {count:,} samples ({pct:.1f}%)")
+            
+            # FIXED: Add quality assessment
+            if avg_confidence < 0.5:
+                st.warning("⚠️ Low average confidence detected. Consider retraining or checking data quality.")
+            elif avg_confidence > 0.8:
+                st.success("✅ High confidence predictions - model is performing well!")
             
             return results_df
             
@@ -397,3 +404,78 @@ class SimpleEmotionClassifiers:
             st.error(f"Error in batch prediction: {str(e)}")
             st.exception(e)
             return None
+    
+    def save_model_components(self, dataset_name="demo"):
+        """FIXED: Save individual model components using joblib for better compatibility"""
+        try:
+            cache_dir = "demo_cache/"
+            os.makedirs(cache_dir, exist_ok=True)
+            
+            saved_components = []
+            
+            # Save Naive Bayes model and PCA
+            if self.nb_classifier is not None:
+                nb_path = f"{cache_dir}/nb_classifier_{dataset_name}.joblib"
+                joblib.dump(self.nb_classifier, nb_path)
+                saved_components.append("Naive Bayes")
+                
+                if self.pca is not None:
+                    pca_path = f"{cache_dir}/pca_{dataset_name}.joblib"
+                    joblib.dump(self.pca, pca_path)
+                    saved_components.append("PCA")
+            
+            # Save Random Forest model
+            if self.rf_classifier is not None:
+                rf_path = f"{cache_dir}/rf_classifier_{dataset_name}.joblib"
+                joblib.dump(self.rf_classifier, rf_path)
+                saved_components.append("Random Forest")
+            
+            return True, saved_components
+            
+        except Exception as e:
+            st.error(f"Error saving model components: {str(e)}")
+            return False, []
+    
+    def load_model_components(self, dataset_name="demo"):
+        """FIXED: Load individual model components using joblib"""
+        try:
+            cache_dir = "demo_cache/"
+            loaded_components = []
+            
+            # Load Naive Bayes model
+            nb_path = f"{cache_dir}/nb_classifier_{dataset_name}.joblib"
+            if os.path.exists(nb_path):
+                self.nb_classifier = joblib.load(nb_path)
+                loaded_components.append("Naive Bayes")
+            
+            # Load PCA
+            pca_path = f"{cache_dir}/pca_{dataset_name}.joblib"
+            if os.path.exists(pca_path):
+                self.pca = joblib.load(pca_path)
+                loaded_components.append("PCA")
+            
+            # Load Random Forest model
+            rf_path = f"{cache_dir}/rf_classifier_{dataset_name}.joblib"
+            if os.path.exists(rf_path):
+                self.rf_classifier = joblib.load(rf_path)
+                loaded_components.append("Random Forest")
+            
+            return True, loaded_components
+            
+        except Exception as e:
+            st.error(f"Error loading model components: {str(e)}")
+            return False, []
+    
+    def get_model_info(self):
+        """Get information about trained models"""
+        info = {
+            'naive_bayes_trained': self.nb_classifier is not None,
+            'random_forest_trained': self.rf_classifier is not None,
+            'pca_applied': self.pca is not None
+        }
+        
+        if self.pca is not None:
+            info['pca_components'] = self.pca.n_components_
+            info['pca_explained_variance'] = f"{self.pca.explained_variance_ratio_.sum():.1%}"
+        
+        return info
