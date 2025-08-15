@@ -1,0 +1,11 @@
+streamlit==1.28.1
+pandas==2.0.3
+numpy==1.24.3
+scikit-learn==1.3.0
+transformers==4.34.0
+torch==2.0.1
+plotly==5.15.0
+seaborn==0.12.2
+matplotlib==3.7.2
+wordcloud==1.9.2
+pillow==10.0.0
