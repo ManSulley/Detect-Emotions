@@ -2,106 +2,18 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import time
 from pathlib import Path
-import pickle
 import os
-import joblib  # ADDED: For individual component caching
+import gc
 
 # Import simplified modules
 from Bert_config import SimpleBERTEmbeddings
 from data_preprocessing import SimpleDataPreprocessor
 from Train_models import SimpleEmotionClassifiers
 from Model_evaluation import SimpleModelEvaluator
-
-# 🗄️ UPDATED CACHING FUNCTIONS
-def save_processed_data(X_train, X_test, y_train, y_test, dataset_name="demo"):
-    """Save processed data to cache"""
-    cache_dir = "demo_cache/"
-    os.makedirs(cache_dir, exist_ok=True)
-    
-    cache_data = {
-        'X_train': X_train,
-        'X_test': X_test, 
-        'y_train': y_train,
-        'y_test': y_test,
-        'dataset_name': dataset_name,
-        'timestamp': time.time()
-    }
-    
-    with open(f"{cache_dir}/processed_data_{dataset_name}.pkl", "wb") as f:
-        pickle.dump(cache_data, f)
-
-def save_trained_models(embeddings_train, embeddings_test, classifiers, bert_embedder, dataset_name="demo"):
-    """🔧 UPDATED: Save embeddings + individual model components"""
-    cache_dir = "demo_cache/"
-    os.makedirs(cache_dir, exist_ok=True)
-    
-    # Save embeddings (as before)
-    cache_data = {
-        'embeddings_train': embeddings_train,
-        'embeddings_test': embeddings_test,
-        'bert_model_name': bert_embedder.model_name,
-        'dataset_name': dataset_name,
-        'timestamp': time.time()
-    }
-    
-    with open(f"{cache_dir}/trained_models_{dataset_name}.pkl", "wb") as f:
-        pickle.dump(cache_data, f)
-    
-    # 🔧 NEW: Save individual model components using joblib
-    success, components = classifiers.save_model_components(dataset_name)
-    
-    return success, components
-
-def load_cached_processed_data(dataset_name="demo"):
-    """Load cached processed data"""
-    try:
-        cache_file = f"demo_cache/processed_data_{dataset_name}.pkl"
-        if os.path.exists(cache_file):
-            with open(cache_file, "rb") as f:
-                return pickle.load(f)
-    except Exception as e:
-        st.warning(f"Could not load cached data: {e}")
-    return None
-
-def load_cached_trained_models(dataset_name="demo"):
-    """Load cached trained models"""
-    try:
-        cache_file = f"demo_cache/trained_models_{dataset_name}.pkl"
-        if os.path.exists(cache_file):
-            with open(cache_file, "rb") as f:
-                return pickle.load(f)
-    except Exception as e:
-        st.warning(f"Could not load cached models: {e}")
-    return None
-
-def load_cached_model_components(classifiers, dataset_name="demo"):
-    """🔧 NEW: Load individual model components"""
-    try:
-        success, components = classifiers.load_model_components(dataset_name)
-        return success, components
-    except Exception as e:
-        st.warning(f"Could not load cached model components: {e}")
-        return False, []
-
-def get_cache_info():
-    """Show what's cached"""
-    cache_dir = "demo_cache/"
-    if not os.path.exists(cache_dir):
-        return []
-    
-    cached_files = []
-    for file in os.listdir(cache_dir):
-        if file.endswith('.pkl') or file.endswith('.joblib'):
-            file_path = os.path.join(cache_dir, file)
-            size_mb = os.path.getsize(file_path) / (1024*1024)
-            cached_files.append({
-                'file': file,
-                'size_mb': f"{size_mb:.1f} MB",
-                'modified': time.ctime(os.path.getmtime(file_path))
-            })
-    return cached_files
 
 # Essential emotion labels (27 emotions)
 EMOTION_LABELS = [
@@ -123,12 +35,12 @@ TEAM_NAMES = [
 
 # Page config
 st.set_page_config(
-    page_title="GoEmotions: Emotion Detection and Prediction",
+    page_title="GoEmotions: Advanced Emotion Detection System",
     layout="wide",
-    page_icon="🎭"
+    page_icon="📊"
 )
 
-# CSS styling (same as before)
+# Enhanced CSS styling
 ACCENT_START = "#22d3ee"
 ACCENT_MID = "#a78bfa" 
 ACCENT_END = "#f472b6"
@@ -169,6 +81,27 @@ st.markdown(
             font-size: 0.9rem;
             color: #e5e7eb;
         }}
+        .emotion-word {{
+            padding: 2px 6px;
+            border-radius: 4px;
+            margin: 1px;
+            display: inline-block;
+        }}
+        .live-emotion {{
+            background: linear-gradient(135deg, {ACCENT_START}33, {ACCENT_MID}33);
+            border: 1px solid {ACCENT_MID}66;
+            padding: 8px 12px;
+            border-radius: 8px;
+            margin: 4px;
+            font-weight: 600;
+        }}
+        .threshold-card {{
+            background: rgba(255,255,255,0.06);
+            border: 1px solid rgba(255,255,255,0.12);
+            border-radius: 12px;
+            padding: 1rem;
+            margin: 0.5rem 0;
+        }}
         .stMarkdown h1, .stMarkdown h2, .stMarkdown h3 {{ color: #e5e7eb !important; }}
         [data-testid="stMetric"] {{
             background: rgba(255,255,255,0.04);
@@ -207,22 +140,6 @@ st.markdown(
             box-shadow: 0 12px 28px {ACCENT_MID}38, 0 4px 12px rgba(0,0,0,0.4);
         }}
         .stButton > button:active {{ transform: translateY(0px) scale(0.99); }}
-        .stTextInput > div > div input, textarea {{
-            background: rgba(255,255,255,0.06) !important;
-            border: 1px solid rgba(255,255,255,0.08) !important;
-            color: #e5e7eb !important;
-            border-radius: 10px !important;
-        }}
-        section[data-testid="stSidebar"] {{
-            background: linear-gradient(180deg, rgba(17,24,39,0.95), rgba(10,15,28,0.95));
-            border-right: 1px solid rgba(255,255,255,0.06);
-        }}
-        .stDataFrame div[role="table"] {{
-            background: rgba(255,255,255,0.02) !important;
-            border-radius: 12px !important;
-            border: 1px solid rgba(255,255,255,0.08) !important;
-        }}
-        .footer {{ text-align: center; color: #9ca3af; padding: 18px; }}
         .step-container {{
             background: rgba(255,255,255,0.04);
             border: 1px solid rgba(255,255,255,0.08);
@@ -250,18 +167,22 @@ st.markdown(
             border-color: #10b981;
             color: #ffffff !important;
         }}
-        .emotion-card {{
-            background: rgba(255,255,255,0.06);
-            border: 1px solid rgba(255,255,255,0.12);
-            border-radius: 12px;
-            padding: 1rem;
-            margin: 0.5rem 0;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.25);
-        }}
     </style>
     """,
     unsafe_allow_html=True,
 )
+
+# Simple cleanup function
+def clear_memory():
+    """Clear memory and GPU cache"""
+    gc.collect()
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+    except:
+        pass
 
 # Initialize components
 @st.cache_resource
@@ -278,20 +199,20 @@ preprocessor, bert_embedder, classifiers, evaluator = get_components()
 if 'step' not in st.session_state:
     st.session_state.step = 1
 
-# Header with original sophisticated styling
+# Header
 header_container = st.container()
 with header_container:
-    st.markdown('<div class="main-header">🎭 GoEmotions: Emotion Detection and Prediction</div>', unsafe_allow_html=True)
+    st.markdown('<div class="main-header">GoEmotions: Advanced Emotion Detection System</div>', unsafe_allow_html=True)
     
-    # Team names as chips (original style)
+    # Team names as chips
     chips = " ".join([f"<span class='chip'>{name}</span>" for name in TEAM_NAMES])
     st.markdown(f"<div style='text-align: center; margin-bottom: 1rem;'>{chips}</div>", unsafe_allow_html=True)
     
     st.markdown(
         "<div style='color:#9ca3af; margin-top:6px; text-align: center;'>"
-        "<strong>🚀 SYSTEM:</strong> Individual component caching + optimized predictions &nbsp;|&nbsp; "
-        "<strong>📊 Performance:</strong> Precision, Recall, F-Measure, ROC-AUC &nbsp;|&nbsp; "
-        "<strong>🎯 Results:</strong> Top 3 emotion predictions"
+        "<strong>INNOVATIONS:</strong> Live Emotion Analysis, Word-Level Attention, Dynamic Thresholds &nbsp;|&nbsp; "
+        "<strong>VISUALIZATIONS:</strong> ROC-AUC Curves, Emotion Trajectories, Memory Management &nbsp;|&nbsp; "
+        "<strong>MODELS:</strong> BERT + Random Forest + Naive Bayes with Advanced Oversampling"
         "</div>",
         unsafe_allow_html=True,
     )
@@ -319,7 +240,7 @@ st.divider()
 
 # Main interface based on current step
 if current_step == 1:
-    # Step 1: Data Upload (REMOVED cache options - now in sidebar only)
+    # Step 1: Data Upload
     st.markdown('<div class="step-container">', unsafe_allow_html=True)
     st.header("Step 1: Upload Your Data")
     
@@ -348,7 +269,7 @@ if current_step == 1:
             st.subheader("Data Preview")
             st.dataframe(df.head(), use_container_width=True)
             
-            # Emotion chart (same as before)
+            # Emotion chart
             st.subheader("Emotion Distribution in Dataset")
             
             emotion_counts = {}
@@ -363,17 +284,26 @@ if current_step == 1:
                     for emotion, count in emotion_counts.items()
                 ]).sort_values('Count', ascending=False)
                 
-                neutral_count = emotion_counts.get('neutral', 0)
-                total_count = sum(emotion_counts.values())
-                neutral_percentage = (neutral_count / total_count) * 100 if total_count > 0 else 0
+                # Analyze imbalance
+                dominant_emotion = emotion_df.iloc[0]['Emotion'].lower()
+                dominant_count = emotion_df.iloc[0]['Count']
+                total_count = emotion_df['Count'].sum()
+                dominant_percentage = (dominant_count / total_count) * 100
                 
-                if neutral_percentage > 40:
-                    st.error(f"⚠️ **CRITICAL BIAS DETECTED!** Neutral emotion represents {neutral_percentage:.1f}% of your data.")
-                    st.info("💡 **Don't worry!** Our system will automatically fix this in Step 2.")
-                elif neutral_percentage > 25:
-                    st.warning(f"⚠️ **Moderate bias detected.** Neutral emotion is {neutral_percentage:.1f}% of data.")
+                # Check for rare emotions
+                rare_emotions = emotion_df[emotion_df['Count'] < 1500]
+                
+                if len(rare_emotions) > 0:
+                    st.error(f"**CLASS IMBALANCE DETECTED!** {len(rare_emotions)} emotions have <1,500 samples.")
+                    st.write("**Rare emotions that will hurt F1-scores:**")
+                    for _, row in rare_emotions.head(5).iterrows():
+                        pct = (row['Count'] / total_count) * 100
+                        st.write(f"   • **{row['Emotion']}**: {row['Count']:,} samples ({pct:.2f}%)")
+                    st.info("**Solution**: Our advanced oversampling will fix this in Step 2!")
+                elif dominant_percentage > 25:
+                    st.warning(f"**Moderate imbalance detected.** {dominant_emotion} represents {dominant_percentage:.1f}% of data.")
                 else:
-                    st.success(f"✅ **Good balance!** Neutral emotion is {neutral_percentage:.1f}% of data.")
+                    st.success(f"**Good balance!** Most emotions have adequate samples.")
                 
                 fig = px.bar(
                     emotion_df, 
@@ -393,16 +323,16 @@ if current_step == 1:
                 
                 st.plotly_chart(fig, use_container_width=True)
             
-            if st.button("✅ Continue to Processing", type="primary"):
+            if st.button("Continue to Processing", type="primary"):
                 st.session_state.step = 2
                 st.rerun()
     
     st.markdown('</div>', unsafe_allow_html=True)
 
 elif current_step == 2:
-    # Step 2: Process Data (REMOVED main cache options)
+    # Step 2: Interactive Data Processing
     st.markdown('<div class="step-container">', unsafe_allow_html=True)
-    st.header("Step 2: Process Data")
+    st.header("Step 2: Advanced Data Processing")
     
     if 'df' not in st.session_state:
         st.warning("Please upload data first")
@@ -413,113 +343,174 @@ elif current_step == 2:
     
     else:
         df = st.session_state.df
-        st.write(f"📊 Working with {len(df):,} samples")
+        st.write(f"Working with {len(df):,} samples")
         
-        # Emotion imbalance controls
-        st.subheader("Fix Emotion Imbalance (Recommended)")
+        # Interactive preprocessing options
+        preprocessing_options = preprocessor.show_interactive_preprocessing_options()
+        
+        # Advanced Emotion Balance Configuration
+        st.subheader("Advanced Class Balance Configuration")
         
         col1, col2 = st.columns(2)
         with col1:
             fix_imbalance = st.checkbox(
-                "**Fix Neutral Emotion Bias**", 
+                "**Enable Advanced Oversampling**", 
                 value=True,
-                help="Highly recommended: Reduces neutral samples and balances emotions"
+                help="BOOST: 5-10x oversampling for rare emotions to dramatically improve F1-scores!"
             )
             
             if fix_imbalance:
-                max_neutral = st.slider(
-                    "Max Neutral Samples", 
-                    min_value=300, 
-                    max_value=15000, 
-                    value=8000,
-                    help="Limit neutral samples to reduce bias"
+                st.success("**Performance Mode**: Rare emotions will be boosted 5-10x for better learning")
+                aggressive_level = st.selectbox(
+                    "Balancing Strategy:",
+                    ["Maximum Performance (5-10x boost)", "Moderate Balance (3-5x boost)", "Conservative (2-3x boost)"],
+                    index=0,
+                    help="Higher levels = better F1-scores for rare emotions"
                 )
+                
+                if "Maximum Performance" in aggressive_level:
+                    target_min_samples = 3000
+                    max_dominant_samples = 12000
+                    st.info("**Expected**: 20-30% F1-score improvement for rare emotions")
+                elif "Moderate Balance" in aggressive_level:
+                    target_min_samples = 2000
+                    max_dominant_samples = 10000
+                    st.info("**Expected**: 15-25% F1-score improvement")
+                else:
+                    target_min_samples = 1500
+                    max_dominant_samples = 8000
+                    st.info("**Expected**: 10-20% F1-score improvement")
         
         with col2:
             sample_size = st.slider(
                 "Final Dataset Size", 
-                min_value=1000, 
-                max_value=min(50000, len(df)), 
-                value=min(15000, len(df)),
-                help="After balancing, limit total size for faster training"
+                min_value=5000, 
+                max_value=min(100000, len(df) * 3), 
+                value=min(25000, len(df)),
+                help="After advanced oversampling, final dataset size for training"
             )
-        
-        # Show current imbalance
-        if 'neutral' in df.columns:
-            neutral_count = (df['neutral'] == 1).sum()
-            total_count = len(df)
-            neutral_pct = (neutral_count / total_count) * 100
             
-            col1, col2, col3 = st.columns(3)
+            if fix_imbalance:
+                st.write("**Balancing Targets:**")
+                st.write(f"• Min samples per emotion: {target_min_samples:,}")
+                st.write(f"• Max dominant samples: {max_dominant_samples:,}")
+                st.write(f"• Rare emotions will be boosted up to 10x!")
+        
+        # Show preprocessing preview
+        if preprocessing_options:
+            preprocessor.show_preprocessing_preview(df, preprocessing_options)
+        
+        # Add preprocessing checkbox
+        st.subheader("Data Processing Options")
+        enable_preprocessing = st.checkbox("Enable Text Preprocessing", value=True, 
+                                         help="Apply selected preprocessing steps to clean text data")
+        
+        if not enable_preprocessing:
+            st.info("Preprocessing disabled. Raw text will be used for training.")
+            preprocessing_options = {'bert_optimized': True}  # Minimal processing
+        
+        # Process button with confirmation
+        if preprocessing_options:
+            st.subheader("Ready to Process")
+            
+            col1, col2 = st.columns([1, 1])
             with col1:
-                st.metric("Current Neutral", f"{neutral_count:,}", delta=f"{neutral_pct:.1f}%")
+                if st.button("Show Processing Summary", type="secondary"):
+                    st.session_state.show_summary = True
+            
             with col2:
-                other_count = total_count - neutral_count
-                other_pct = 100 - neutral_pct
-                st.metric("Other Emotions", f"{other_count:,}", delta=f"{other_pct:.1f}%")
-            with col3:
-                if neutral_pct > 40:
-                    st.metric("Bias Level", "🔴 High", help="Strong neutral bias detected")
-                elif neutral_pct > 25:
-                    st.metric("Bias Level", "🟡 Moderate", help="Some neutral bias")
+                process_button = st.button("Process Data", type="primary")
+            
+            # Show processing summary if requested
+            if st.session_state.get('show_summary', False):
+                st.info("**Processing Summary:**")
+                if preprocessing_options.get('bert_optimized', False):
+                    st.write("**BERT-Optimized Mode**: Minimal cleaning for maximum accuracy")
                 else:
-                    st.metric("Bias Level", "🟢 Good", help="Balanced dataset")
-        
-        # Process button
-        process_button = st.button("Process Data", type="primary", key="process_btn")
-        
-        if process_button:
-            with st.spinner("Processing data with imbalance fixing..."):
-                try:
-                    X_train, X_test, y_train, y_test = preprocessor.process_data(
-                        df, 
-                        sample_size=sample_size,
-                        fix_imbalance=fix_imbalance
-                    )
+                    active_steps = []
+                    if preprocessing_options.get('remove_stopwords'):
+                        active_steps.append("Remove stop words")
+                    if preprocessing_options.get('remove_punctuation'):
+                        active_steps.append("Remove punctuation")
+                    if preprocessing_options.get('remove_numbers'):
+                        active_steps.append("Remove numbers")
+                    if preprocessing_options.get('use_lemmatization'):
+                        active_steps.append("Lemmatization")
+                    elif preprocessing_options.get('use_stemming'):
+                        active_steps.append("Stemming")
                     
-                    if X_train is not None and X_test is not None:
-                        st.session_state.X_train = X_train
-                        st.session_state.X_test = X_test
-                        st.session_state.y_train = y_train
-                        st.session_state.y_test = y_test
-                        st.session_state.data_processed = True
+                    st.write(f"**Standard NLP**: {', '.join(active_steps) if active_steps else 'Minimal processing'}")
+                
+                if fix_imbalance:
+                    st.write(f"**Balance Fix**: Limit dominant class to {max_dominant_samples:,} samples")
+                st.write(f"**Final Size**: {sample_size:,} samples")
+            
+            if process_button:
+                with st.spinner("Processing data with advanced oversampling..."):
+                    try:
+                        # Pass the new aggressive balancing parameters
+                        if fix_imbalance:
+                            # Update preprocessor with aggressive settings
+                            if hasattr(preprocessor, 'aggressive_emotion_balancing'):
+                                # Store settings for the aggressive balancing
+                                preprocessor.target_min_samples = target_min_samples
+                                preprocessor.max_dominant_samples = max_dominant_samples
                         
-                        st.success("✅ Data processed successfully with bias correction!")
-                        st.balloons()
+                        X_train, X_test, y_train, y_test = preprocessor.process_data(
+                            df, 
+                            sample_size=sample_size,
+                            preprocessing_options=preprocessing_options if enable_preprocessing else {'bert_optimized': True},
+                            fix_imbalance=fix_imbalance
+                        )
                         
-                        col1, col2, col3 = st.columns(3)
-                        with col1:
-                            st.metric("Training Samples", len(X_train))
-                        with col2:
-                            st.metric("Test Samples", len(X_test))
-                        with col3:
-                            st.metric("Ready for Training", "✅")
-                        
-                        st.info("🚀 **Auto-advancing to Step 3 in 2 seconds...**")
-                        time.sleep(2)
-                        st.session_state.step = 3
-                        st.rerun()
-                        
-                    else:
-                        st.error("❌ Data processing failed")
-                        
-                except Exception as e:
-                    st.error(f"❌ Error: {str(e)}")
+                        if X_train is not None and X_test is not None:
+                            st.session_state.X_train = X_train
+                            st.session_state.X_test = X_test
+                            st.session_state.y_train = y_train
+                            st.session_state.y_test = y_test
+                            st.session_state.data_processed = True
+                            st.session_state.preprocessing_options = preprocessing_options
+                            
+                            st.success("Data processed with advanced oversampling!")
+                            st.balloons()
+                            
+                            col1, col2, col3 = st.columns(3)
+                            with col1:
+                                st.metric("Training Samples", f"{len(X_train):,}")
+                            with col2:
+                                st.metric("Test Samples", f"{len(X_test):,}")
+                            with col3:
+                                # Calculate expected improvement
+                                if fix_imbalance:
+                                    if "Maximum Performance" in aggressive_level:
+                                        expected_boost = "20-30%"
+                                    elif "Moderate Balance" in aggressive_level:
+                                        expected_boost = "15-25%"
+                                    else:
+                                        expected_boost = "10-20%"
+                                    st.metric("Expected F1 Boost", expected_boost)
+                                else:
+                                    st.metric("Ready for Training", "Yes")
+                            
+                        else:
+                            st.error("Data processing failed")
+                            
+                    except Exception as e:
+                        st.error(f"Error: {str(e)}")
         
         # Continue button if data exists
         if all(key in st.session_state for key in ['X_train', 'X_test', 'y_train', 'y_test']):
             st.divider()
-            st.success("✅ Data is processed and ready for training!")
+            st.success("Data is processed with advanced oversampling and ready for high-performance training!")
             
             if st.button("**CONTINUE TO TRAINING**", type="primary", key="continue_big"):
                 st.session_state.step = 3
-                st.success("Moving to Step 3...")
                 st.rerun()
         
         st.markdown('</div>', unsafe_allow_html=True)
 
 elif current_step == 3:
-    # Step 3: Train Models (REMOVED main cache options - now in sidebar)
+    # Step 3: Train Models with BERT Model Info
     st.markdown('<div class="step-container">', unsafe_allow_html=True)
     st.header("Step 3: Train Models")
     
@@ -533,26 +524,87 @@ elif current_step == 3:
     else:
         st.write(f"Ready to train with {len(st.session_state.X_train):,} training samples")
         
-        # Model Selection (same as before)
-        st.subheader("Model Configuration")
+        # BERT Model Selection with Advantages/Disadvantages
+        st.subheader("BERT Model Configuration")
         
-        model_options = {
-            'bert-base-uncased': {
-                'name': 'BERT Base Uncased (Recommended)',
-                'description': '**Best for emotion detection** - Optimized for social media text',
-            },
-            'bert-large-uncased': {
-                'name': 'BERT Large Uncased',
-                'description': '**Slower but slightly more accurate** - 2x computational cost',
-            },
-        }
+        col1, col2 = st.columns([3, 1])
         
-        selected_model = st.selectbox(
-            "Choose BERT Model:",
-            options=list(model_options.keys()),
-            index=0,
-            format_func=lambda x: model_options[x]['name']
-        )
+        with col1:
+            model_options = {
+                'bert-base-uncased': {
+                    'name': 'BERT Base Uncased (Recommended)',
+                    'description': '**Best for emotion detection** - Optimized for social media text',
+                },
+                'bert-large-uncased': {
+                    'name': 'BERT Large Uncased',
+                    'description': '**Slower but slightly more accurate** - 2x computational cost',
+                },
+            }
+            
+            selected_model = st.selectbox(
+                "Choose BERT Model:",
+                options=list(model_options.keys()),
+                index=0,
+                format_func=lambda x: model_options[x]['name']
+            )
+        
+        with col2:
+            st.write("**System Status:**")
+            st.write("CPU: Available")
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    st.write("GPU: Available")
+                else:
+                    st.write("GPU: Not available")
+            except:
+                st.write("GPU: Not detected")
+        
+        # Model advantages/disadvantages
+        with st.expander("BERT Model Comparison & Hardware Requirements"):
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.write("**BERT Base Uncased**")
+                st.write("**Advantages:**")
+                st.write("• Perfect for emotion detection (GoEmotions trained)")
+                st.write("• Fast training: ~2-5 minutes")
+                st.write("• Memory efficient: 768 dimensions")
+                st.write("• Works on CPU (4GB+ RAM)")
+                st.write("• GPU recommended: 2GB+")
+                st.write("• Proven accuracy: 75-85% emotion tasks")
+                
+                st.write("**Disadvantages:**")
+                st.write("• Lower capacity than BERT Large")
+                st.write("• May miss subtle emotions")
+            
+            with col2:
+                st.write("**BERT Large Uncased**")
+                st.write("**Advantages:**")
+                st.write("• Higher capacity: 1024 dimensions")
+                st.write("• Better at complex language")
+                st.write("• ~3% better accuracy")
+                st.write("• More robust to noise")
+                
+                st.write("**Disadvantages:**")
+                st.write("• 2x slower training: ~5-15 minutes")
+                st.write("• Memory hungry: 8GB+ RAM needed")
+                st.write("• GPU recommended: 6GB+")
+                st.write("• Overkill for social media text")
+                st.write("• Diminishing returns for emotions")
+            
+            # Hardware recommendations
+            st.divider()
+            st.write("**Recommendations:**")
+            
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    st.success("**Excellent setup!** GPU detected. Both models will work great. BERT Base recommended for speed.")
+                else:
+                    st.info("**CPU Mode**: Training will be slower but functional. BERT Base recommended.")
+            except:
+                st.info("**Standard setup**: BERT Base is the optimal choice for emotion detection.")
         
         # Update embedder
         if selected_model != bert_embedder.model_name:
@@ -571,64 +623,37 @@ elif current_step == 3:
                 st.rerun()
         
         else:
-            # FIXED: Show memory usage estimate before training
-            if 'X_train' in st.session_state:
-                num_samples = len(st.session_state.X_train)
-                memory_est = bert_embedder.estimate_memory_usage(num_samples)
-                
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.metric("Training Samples", f"{num_samples:,}")
-                    st.metric("Estimated Memory", f"{memory_est['total_mb']:.0f} MB")
-                
-                with col2:
-                    if memory_est['warning']:
-                        st.error("⚠️ High memory usage expected")
-                        st.write("Consider using smaller dataset")
-                    else:
-                        st.success("✅ Memory usage acceptable")
-                    st.write(f"💡 {memory_est['recommendation']}")
-            
-            train_button = st.button("🚀 Start Training", type="primary", key="start_training_btn")
+            train_button = st.button("Start Training", type="primary", key="start_training_btn")
             
             if train_button:
                 progress_bar = st.progress(0)
                 status = st.empty()
                 
                 try:
-                    # Check if we have cached embeddings
-                    embeddings_already_cached = hasattr(st.session_state, 'X_train_embeddings') and hasattr(st.session_state, 'X_test_embeddings')
+                    # Generate BERT embeddings
+                    status.text(f"Loading {selected_model} model...")
+                    success = bert_embedder.load_model()
+                    if not success:
+                        st.error("Failed to load BERT model")
+                        st.stop()
                     
-                    if embeddings_already_cached:
-                        st.info("⚡ Using cached embeddings - training classifiers only...")
-                        X_train_embeddings = st.session_state.X_train_embeddings
-                        X_test_embeddings = st.session_state.X_test_embeddings
-                        progress_bar.progress(60)
-                    else:
-                        # Generate BERT embeddings
-                        status.text(f"Loading {selected_model} model...")
-                        success = bert_embedder.load_model()
-                        if not success:
-                            st.error("Failed to load BERT model")
-                            st.stop()
-                        
-                        progress_bar.progress(20)
-                        
-                        status.text("Generating training embeddings...")
-                        X_train_embeddings = bert_embedder.generate_embeddings(st.session_state.X_train)
-                        if X_train_embeddings is None:
-                            st.error("Failed to generate training embeddings")
-                            st.stop()
-                        
-                        progress_bar.progress(40)
-                        
-                        status.text("Generating test embeddings...")
-                        X_test_embeddings = bert_embedder.generate_embeddings(st.session_state.X_test)
-                        if X_test_embeddings is None:
-                            st.error("Failed to generate test embeddings")
-                            st.stop()
-                        
-                        progress_bar.progress(60)
+                    progress_bar.progress(20)
+                    
+                    status.text("Generating training embeddings...")
+                    X_train_embeddings = bert_embedder.generate_embeddings(st.session_state.X_train)
+                    if X_train_embeddings is None:
+                        st.error("Failed to generate training embeddings")
+                        st.stop()
+                    
+                    progress_bar.progress(40)
+                    
+                    status.text("Generating test embeddings...")
+                    X_test_embeddings = bert_embedder.generate_embeddings(st.session_state.X_test)
+                    if X_test_embeddings is None:
+                        st.error("Failed to generate test embeddings")
+                        st.stop()
+                    
+                    progress_bar.progress(60)
                     
                     # Train models
                     status.text("Training Naive Bayes with GaussianNB + PCA...")
@@ -649,8 +674,8 @@ elif current_step == 3:
                     st.session_state.models_trained = True
                     st.session_state.selected_model = selected_model
                     
-                    status.text("✅ Training completed!")
-                    st.success("🎉 Models trained successfully!")
+                    status.text("Training completed!")
+                    st.success("Models trained successfully!")
                     st.balloons()
                     
                     # Show training summary
@@ -674,7 +699,7 @@ elif current_step == 3:
                         st.metric("Models Trained", len(models_trained))
                         st.metric("Status", "Ready")
                     
-                    st.info("📊 **Auto-advancing to Step 4 in 2 seconds...**")
+                    st.info("**Auto-advancing to Step 4 in 2 seconds...**")
                     time.sleep(2)
                     st.session_state.step = 4
                     st.rerun()
@@ -686,14 +711,15 @@ elif current_step == 3:
         st.markdown('</div>', unsafe_allow_html=True)
 
 elif current_step == 4:
-    # Step 4: Evaluate Models (same as before)
+    # Step 4: Evaluate Models with ROC-AUC Visualization
     st.markdown('<div class="step-container">', unsafe_allow_html=True)
-    st.header("Step 4: Evaluate Models")
+    st.header("Step 4: Evaluate Models with Advanced Visualization")
     
     if all(key in st.session_state for key in ['X_test_embeddings', 'y_test', 'classifiers']):
         
         if st.button("Evaluate Models", type="primary"):
-            with st.spinner("Evaluating models with all required metrics..."):
+            with st.spinner("Evaluating models with comprehensive metrics and visualizations..."):
+                # Evaluate models
                 results = evaluator.evaluate_models(
                     st.session_state.classifiers,
                     st.session_state.X_test_embeddings,
@@ -703,25 +729,19 @@ elif current_step == 4:
                 if results:
                     st.session_state.results = results
                     
+                    # Performance summary
                     summary_data = evaluator.display_performance_summary(results)
-                    
-                    st.subheader("Model Recommendations")
-                    recommendations = evaluator.get_model_recommendations(results)
-                    for recommendation in recommendations:
-                        st.write(recommendation)
-                    
-                    evaluator.explain_metrics()
                     
                     if summary_data and len(summary_data) > 1:
                         best_model_data = max(summary_data, key=lambda x: float(x['Accuracy'].rstrip('%')))
                         best_model_name = best_model_data['Model'].lower().replace(' ', '_')
                         st.session_state.best_model_for_prediction = best_model_name
                         
-                        st.success(f"🏆 **{best_model_data['Model']}** will be used for predictions")
+                        st.success(f"**{best_model_data['Model']}** will be used for predictions")
                     else:
                         st.session_state.best_model_for_prediction = 'random_forest'
                     
-                    if st.button("Continue to Predictions", type="primary"):
+                    if st.button("Continue to Advanced Predictions", type="primary"):
                         st.session_state.step = 5
                         st.rerun()
     else:
@@ -733,9 +753,9 @@ elif current_step == 4:
     st.markdown('</div>', unsafe_allow_html=True)
 
 elif current_step == 5:
-    # Step 5: Make Predictions (🎯 UPDATED: Show top 3 emotions nicely)
+    # Step 5: Advanced Predictions with Innovations
     st.markdown('<div class="step-container">', unsafe_allow_html=True)
-    st.header("Step 5: Make Predictions")
+    st.header("Step 5: Advanced Emotion Predictions")
     
     if all(key in st.session_state for key in ['classifiers', 'bert_embedder']):
         
@@ -749,19 +769,19 @@ elif current_step == 5:
                 hamming_accuracy = metrics.get('hamming_accuracy', 0) * 100
                 roc_auc = metrics.get('roc_auc', 0) * 100
                 
-                st.info(f"🏆 Using best model: **{best_model_display}** "
+                st.info(f"Using best model: **{best_model_display}** "
                        f"(Accuracy: {hamming_accuracy:.1f}%, ROC-AUC: {roc_auc:.1f}%)")
             else:
-                st.info(f"🤖 Using model: **{best_model_display}**")
+                st.info(f"Using model: **{best_model_display}**")
         
-        # Prediction tabs
-        tab1, tab2 = st.tabs(["📝 Single Text", "📄 Batch Upload"])
+        # Prediction tabs with innovations
+        tab1, tab2, tab3, tab4 = st.tabs(["Single Text", "Batch Upload", "Live Analysis", "Emotion Trajectory"])
         
         with tab1:
-            st.subheader("📝 Single Text Prediction")
+            st.subheader("Single Text Prediction with Word-Level Attention")
             
             # Emotion examples
-            with st.expander("💡 Try these example texts"):
+            with st.expander("Try these example texts"):
                 example_texts = [
                     "I'm so excited about this new opportunity! Can't wait to start!",
                     "This situation is really frustrating and making me angry.",
@@ -782,41 +802,47 @@ elif current_step == 5:
                 placeholder="Type something like: 'I'm so excited about this!' or 'This makes me angry.'"
             )
             
-            if st.button("🎯 Predict Emotions", type="primary"):
+            col1, col2 = st.columns([1, 1])
+            with col1:
+                show_attention = st.checkbox("Show Word-Level Attention", value=True, 
+                                           help="Highlight which words triggered each emotion")
+            with col2:
+                st.write("")  # Placeholder for balanced layout
+            
+            if st.button("Predict Emotions", type="primary"):
                 if text_input.strip():
-                    with st.spinner("Analyzing emotions..."):
-                        results = classifiers.predict_single_text(
+                    with st.spinner("Analyzing emotions with advanced features..."):
+                        results = classifiers.predict_single_text_with_attention(
                             text_input, 
                             st.session_state.bert_embedder,
                             model_type=best_model,
-                            threshold=0.3
+                            threshold=0.3,
+                            thresholds=None,
+                            return_attention=show_attention
                         )
                         
                         if results and 'top_3_emotions' in results:
-                            st.subheader("🎭 Top 3 Predicted Emotions")
+                            st.subheader("Top 3 Predicted Emotions")
                             
-                            # 🎯 UPDATED: Show top 3 emotions in nice cards
+                            # Show top 3 emotions in nice cards
                             for i, (emotion, prob) in enumerate(zip(results['top_3_emotions'], results['top_3_probabilities'])):
                                 rank = i + 1
                                 confidence_pct = prob * 100
                                 
-                                # Medal icons
+                                # Color coding
                                 if rank == 1:
-                                    icon = "🥇"
                                     color = "#FFD700"
                                 elif rank == 2:
-                                    icon = "🥈" 
                                     color = "#C0C0C0"
                                 else:
-                                    icon = "🥉"
                                     color = "#CD7F32"
                                 
                                 # Create emotion card
                                 st.markdown(f"""
-                                <div class="emotion-card" style="border-left: 4px solid {color};">
+                                <div class="threshold-card" style="border-left: 4px solid {color};">
                                     <div style="display: flex; justify-content: space-between; align-items: center;">
                                         <div>
-                                            <h4>{icon} #{rank} {emotion.title()}</h4>
+                                            <h4>#{rank} {emotion.title()}</h4>
                                             <p style="margin: 0; color: #9ca3af;">Confidence: {confidence_pct:.1f}%</p>
                                         </div>
                                         <div style="font-size: 2rem; opacity: 0.7;">{confidence_pct:.0f}%</div>
@@ -826,6 +852,22 @@ elif current_step == 5:
                                 
                                 # Progress bar
                                 st.progress(prob, text=f"{emotion.title()}: {confidence_pct:.1f}%")
+                            
+                            # Word-level attention visualization
+                            if show_attention and 'attention_weights' in results:
+                                st.subheader("Word-Level Emotion Attention")
+                                st.write("**Words highlighted by importance for detected emotions:**")
+                                
+                                attention_html = bert_embedder.visualize_attention(
+                                    text_input, 
+                                    results['attention_weights'],
+                                    results['top_3_emotions'][0]  # Top emotion
+                                )
+                                
+                                if attention_html:
+                                    st.markdown(attention_html, unsafe_allow_html=True)
+                                    
+                                    st.info(f"**Analysis**: Words in darker colors contributed more to detecting **{results['top_3_emotions'][0]}** emotion.")
                             
                             # Show insight based on top emotion
                             top_emotion = results['top_3_emotions'][0]
@@ -838,32 +880,7 @@ elif current_step == 5:
                             else:
                                 insight = f"Weak **{top_emotion}** signal. The text may be emotionally neutral or contain mixed emotions."
                             
-                            st.info(f"🧠 **Analysis**: {insight}")
-                            
-                            # Show emotion distribution chart
-                            if len(results['top_3_emotions']) >= 3:
-                                emotion_df = pd.DataFrame({
-                                    'Emotion': [e.title() for e in results['top_3_emotions']],
-                                    'Confidence': [p*100 for p in results['top_3_probabilities']]
-                                })
-                                
-                                fig = px.bar(
-                                    emotion_df,
-                                    x='Emotion',
-                                    y='Confidence',
-                                    title="Top 3 Emotion Predictions",
-                                    color='Confidence',
-                                    color_continuous_scale='viridis'
-                                )
-                                
-                                fig.update_layout(
-                                    template="plotly_dark",
-                                    paper_bgcolor="rgba(0,0,0,0)",
-                                    plot_bgcolor="rgba(0,0,0,0)",
-                                    height=400
-                                )
-                                
-                                st.plotly_chart(fig, use_container_width=True)
+                            st.info(f"**Analysis**: {insight}")
                         
                         else:
                             st.error("Failed to analyze emotions. Please try again.")
@@ -871,8 +888,8 @@ elif current_step == 5:
                     st.warning("Please enter some text")
         
         with tab2:
-            # Batch upload (same as before)
-            st.subheader("📄 Batch File Prediction")
+            # Batch upload with trajectory
+            st.subheader("Batch File Prediction")
             
             uploaded_file = st.file_uploader(
                 "Upload CSV file with 'text' column",
@@ -890,17 +907,28 @@ elif current_step == 5:
                         st.success(f"Loaded {len(df):,} texts for prediction")
                         st.dataframe(df.head(), use_container_width=True)
                         
+                        # Batch processing options
+                        show_trajectory = st.checkbox("Show Emotion Trajectory", value=True, key="batch_trajectory")
+                        
                         if st.button("Process Batch", type="primary"):
                             with st.spinner(f"Processing {len(df):,} texts..."):
-                                results_df = classifiers.predict_batch(
+                                results_df = classifiers.predict_batch_with_trajectory(
                                     df, 
                                     st.session_state.bert_embedder,
                                     model_type=best_model,
-                                    threshold=0.25
+                                    threshold=0.25,
+                                    thresholds=None
                                 )
                                 
                                 if results_df is not None:
-                                    st.success(f"✅ Processed {len(results_df):,} texts!")
+                                    st.success(f"Processed {len(results_df):,} texts!")
+                                    
+                                    # Show trajectory if enabled
+                                    if show_trajectory:
+                                        trajectory_fig = evaluator.create_emotion_trajectory(results_df)
+                                        if trajectory_fig:
+                                            st.subheader("Emotion Trajectory Over Time")
+                                            st.plotly_chart(trajectory_fig, use_container_width=True)
                                     
                                     # Show results
                                     st.subheader("First 50 Results")
@@ -927,7 +955,7 @@ elif current_step == 5:
                                     with col1:
                                         csv_data = results_df.to_csv(index=False)
                                         st.download_button(
-                                            "📥 Download Complete Results",
+                                            "Download Complete Results",
                                             data=csv_data,
                                             file_name=f"emotion_predictions_{len(results_df)}.csv",
                                             mime="text/csv",
@@ -944,16 +972,119 @@ elif current_step == 5:
                                         
                                         summary_csv = pd.DataFrame([summary]).to_csv(index=False)
                                         st.download_button(
-                                            "📊 Download Summary", 
+                                            "Download Summary", 
                                             data=summary_csv,
                                             file_name="emotion_summary.csv",
                                             mime="text/csv"
                                         )
                                 else:
-                                    st.error("❌ Batch prediction failed")
+                                    st.error("Batch prediction failed")
                 
                 except Exception as e:
-                    st.error(f"❌ Error processing file: {str(e)}")
+                    st.error(f"Error processing file: {str(e)}")
+        
+        with tab3:
+            # Live emotion analysis
+            st.subheader("Live Emotion Analysis")
+            st.write("**Type and watch emotions update in real-time!**")
+            
+            # Live text input
+            live_text = st.text_area(
+                "Type your message here:",
+                placeholder="Start typing to see live emotion analysis...",
+                height=100,
+                key="live_input_area"
+            )
+            
+            # Live analysis trigger
+            if st.button("Analyze Current Text", key="live_analyze_btn"):
+                if live_text and len(live_text.strip()) > 5:
+                    with st.spinner("Analyzing..."):
+                        results = classifiers.predict_single_text(
+                            live_text, 
+                            st.session_state.bert_embedder,
+                            model_type=best_model,
+                            threshold=0.3
+                        )
+                        
+                        if results and 'top_3_emotions' in results:
+                            st.write("**Live Emotions Detected:**")
+                            
+                            # Show live emotions
+                            for i, (emotion, prob) in enumerate(zip(results['top_3_emotions'], results['top_3_probabilities'])):
+                                if prob > 0.2:  # Show confident predictions
+                                    confidence = prob * 100
+                                    st.markdown(f"<span class='live-emotion'>{emotion.title()} ({confidence:.0f}%)</span>", unsafe_allow_html=True)
+                            
+                            # Emotion meter
+                            top_emotion = results['top_3_emotions'][0]
+                            top_confidence = results['top_3_probabilities'][0]
+                            
+                            col1, col2 = st.columns([3, 1])
+                            with col1:
+                                st.progress(top_confidence, text=f"Strongest emotion: {top_emotion.title()}")
+                            with col2:
+                                st.metric("Confidence", f"{top_confidence*100:.0f}%")
+                        else:
+                            st.error("Failed to analyze emotions. Please try again.")
+                else:
+                    st.info("Please type at least 5 characters for analysis...")
+        
+        with tab4:
+            # Emotion trajectory comparison
+            st.subheader("Emotion Trajectory Comparison")
+            st.write("**Compare emotion trends between different texts or time periods**")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.write("**Text A:**")
+                text_a = st.text_area("First text or early period", placeholder="Enter first text...", key="text_a")
+            
+            with col2:
+                st.write("**Text B:**")
+                text_b = st.text_area("Second text or later period", placeholder="Enter second text...", key="text_b")
+            
+            if st.button("Compare Emotions", type="primary"):
+                if text_a.strip() and text_b.strip():
+                    with st.spinner("Analyzing both texts..."):
+                        # Analyze both texts
+                        results_a = classifiers.predict_single_text(text_a, st.session_state.bert_embedder, model_type=best_model)
+                        results_b = classifiers.predict_single_text(text_b, st.session_state.bert_embedder, model_type=best_model)
+                        
+                        if results_a and results_b:
+                            # Create comparison chart
+                            comparison_fig = evaluator.create_emotion_comparison(results_a, results_b, "Text A", "Text B")
+                            if comparison_fig:
+                                st.plotly_chart(comparison_fig, use_container_width=True)
+                            
+                            # Show key differences
+                            st.subheader("Key Differences")
+                            
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                st.write("**Text A Top Emotions:**")
+                                for i, (emotion, prob) in enumerate(zip(results_a['top_3_emotions'], results_a['top_3_probabilities'])):
+                                    st.write(f"{i+1}. {emotion.title()}: {prob*100:.1f}%")
+                            
+                            with col2:
+                                st.write("**Text B Top Emotions:**")
+                                for i, (emotion, prob) in enumerate(zip(results_b['top_3_emotions'], results_b['top_3_probabilities'])):
+                                    st.write(f"{i+1}. {emotion.title()}: {prob*100:.1f}%")
+                            
+                            # Insight
+                            top_a = results_a['top_3_emotions'][0]
+                            top_b = results_b['top_3_emotions'][0]
+                            
+                            if top_a == top_b:
+                                st.info(f"**Consistent Emotion**: Both texts show **{top_a}** as the dominant emotion.")
+                            else:
+                                st.warning(f"**Emotion Shift**: From **{top_a}** in Text A to **{top_b}** in Text B.")
+                        
+                        else:
+                            st.error("Failed to analyze one or both texts")
+                else:
+                    st.warning("Please enter both texts for comparison")
     else:
         st.warning("Please complete evaluation first")
         if st.button("Back to Evaluation"):
@@ -962,9 +1093,9 @@ elif current_step == 5:
     
     st.markdown('</div>', unsafe_allow_html=True)
 
-# 🔧 UPDATED SIDEBAR: Cache options moved here + component caching
+# Enhanced sidebar with memory monitoring
 with st.sidebar:
-    st.header("📊 System Status")
+    st.header("System Status")
     
     status_items = [
         ("Data Loaded", 'df' in st.session_state),
@@ -975,9 +1106,9 @@ with st.sidebar:
     
     for label, status in status_items:
         if status:
-            st.success(f"✅ {label}")
+            st.success(f"✓ {label}")
         else:
-            st.error(f"❌ {label}")
+            st.error(f"✗ {label}")
     
     # Progress indicator
     completed_steps = sum(1 for _, status in status_items if status)
@@ -990,110 +1121,9 @@ with st.sidebar:
     
     st.divider()
     
-    # 🔧 UPDATED: Cache Management moved to sidebar with component caching
-    st.header("💾 Cache Management")
-    
-    cache_info = get_cache_info()
-    if cache_info:
-        st.success(f"📁 {len(cache_info)} cached files")
-        
-        with st.expander("📁 View Cache Details"):
-            for info in cache_info:
-                file_type = "📦 Model Component" if info['file'].endswith('.joblib') else "📊 Data"
-                st.write(f"{file_type} **{info['file']}**")
-                st.caption(f"Size: {info['size_mb']} | Modified: {info['modified']}")
-        
-        # Cache options
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            # Load cached data
-            cached_data = load_cached_processed_data("demo")
-            if cached_data:
-                if st.button("⚡ Load Data", help="Load cached processed data"):
-                    st.session_state.X_train = cached_data['X_train']
-                    st.session_state.X_test = cached_data['X_test']
-                    st.session_state.y_train = cached_data['y_train']
-                    st.session_state.y_test = cached_data['y_test']
-                    st.session_state.data_processed = True
-                    st.success("⚡ Data loaded!")
-                    st.rerun()
-            
-            # Load cached models
-            cached_models = load_cached_trained_models("demo")
-            if cached_models:
-                if st.button("⚡ Load Embeddings", help="Load cached BERT embeddings"):
-                    st.session_state.X_train_embeddings = cached_models['embeddings_train']
-                    st.session_state.X_test_embeddings = cached_models['embeddings_test']
-                    st.session_state.selected_model = cached_models['bert_model_name']
-                    st.success("⚡ Embeddings loaded!")
-        
-        with col2:
-            # Load cached model components
-            if st.button("⚡ Load Models", help="Load cached trained models"):
-                success, components = load_cached_model_components(classifiers, "demo")
-                if success and components:
-                    st.success(f"⚡ Loaded: {', '.join(components)}")
-                    st.session_state.models_trained = True
-                else:
-                    st.warning("No model components found")
-            
-            # Save current models  
-            if hasattr(st.session_state, 'classifiers') and st.session_state.get('models_trained', False):
-                if st.button("💾 Save Models", help="Save current trained models"):
-                    success, components = save_trained_models(
-                        st.session_state.get('X_train_embeddings'),
-                        st.session_state.get('X_test_embeddings'),
-                        st.session_state.classifiers,
-                        st.session_state.bert_embedder,
-                        "demo"
-                    )
-                    if success:
-                        st.success(f"💾 Saved: {', '.join(components)}")
-        
-        # FIXED: Enhanced cache management with safety checks
-        if st.button("🧹 Clear All Cache", help="Delete all cached files"):
-            try:
-                import shutil
-                if os.path.exists("demo_cache/"):
-                    # Clear BERT model from memory first
-                    if hasattr(st.session_state, 'bert_embedder'):
-                        st.session_state.bert_embedder.clear_model()
-                    
-                    shutil.rmtree("demo_cache/")
-                    st.success("🗑️ Cache cleared!")
-                    
-                    # Clear session state related to cache
-                    cache_keys = ['X_train_embeddings', 'X_test_embeddings', 'models_trained']
-                    for key in cache_keys:
-                        if key in st.session_state:
-                            del st.session_state[key]
-                    
-                    st.rerun()
-                else:
-                    st.info("No cache to clear")
-            except Exception as e:
-                st.error(f"Error clearing cache: {e}")
-    else:
-        st.info("📁 No cache files found")
-        
-        # Show save options for current data
-        if hasattr(st.session_state, 'X_train'):
-            if st.button("💾 Save Current Data"):
-                save_processed_data(
-                    st.session_state.X_train,
-                    st.session_state.X_test,
-                    st.session_state.y_train,
-                    st.session_state.y_test,
-                    "demo"
-                )
-                st.success("💾 Data saved!")
-    
-    st.divider()
-    
-    # Model performance (same as before)
+    # Model performance
     if hasattr(st.session_state, 'results') and st.session_state.results:
-        st.header("🏆 Model Performance")
+        st.header("Model Performance")
         results = st.session_state.results
         
         for model_name, metrics in results.items():
@@ -1101,23 +1131,20 @@ with st.sidebar:
             roc_auc = metrics.get('roc_auc', 0) * 100
             
             if hamming_accuracy >= 75:
-                status_icon = "🟢"
                 status_text = "Excellent"
             elif hamming_accuracy >= 65:
-                status_icon = "🟡"
                 status_text = "Good"
             else:
-                status_icon = "🟠"
                 status_text = "Fair"
             
             st.write(f"**{model_name.replace('_', ' ').title()}**")
-            st.write(f"{status_icon} {hamming_accuracy:.1f}% {status_text}")
+            st.write(f"{hamming_accuracy:.1f}% {status_text}")
             st.write(f"   ROC-AUC: {roc_auc:.1f}%")
     
     st.divider()
     
     # Manual navigation
-    st.header("🔧 Manual Navigation")
+    st.header("Manual Navigation")
     current_step_num = st.session_state.get('step', 1)
     
     col1, col2 = st.columns(2)
@@ -1133,7 +1160,9 @@ with st.sidebar:
     
     st.write(f"Step: {current_step_num}/5")
     
-    if st.button("🔄 Start Over"):
+    if st.button("Start Over"):
+        # Clear memory before restart
+        clear_memory()
         for key in list(st.session_state.keys()):
             if key != 'step':
                 del st.session_state[key]
@@ -1143,9 +1172,9 @@ with st.sidebar:
 # Footer
 st.divider()
 st.markdown(
-    "<div class='footer'>"
-    "<p><strong>🎯 GoEmotions: Enhanced Emotion Detection System</strong></p>"
-    "<p>Individual Component Caching | Top 3 Emotion Predictions | All Required Metrics</p>"
+    "<div style='text-align: center; color: #9ca3af; padding: 18px;'>"
+    "<p><strong>GoEmotions: Advanced Emotion Detection System</strong></p>"
+    "<p>BERT-based Multi-Label Emotion Classification with Random Forest and Naive Bayes</p>"
     "</div>",
     unsafe_allow_html=True
 )

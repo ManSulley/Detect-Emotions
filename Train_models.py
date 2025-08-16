@@ -1,10 +1,10 @@
 import numpy as np
 import pandas as pd
 import streamlit as st
-from sklearn.naive_bayes import GaussianNB  # FIXED: Use GaussianNB for continuous BERT embeddings
+from sklearn.naive_bayes import GaussianNB
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.multioutput import MultiOutputClassifier
-from sklearn.decomposition import PCA  # ADDED: For dimensionality reduction
+from sklearn.decomposition import PCA
 from sklearn.pipeline import Pipeline
 from sklearn.utils.class_weight import compute_class_weight
 import time
@@ -15,7 +15,7 @@ class SimpleEmotionClassifiers:
     def __init__(self):
         self.nb_classifier = None
         self.rf_classifier = None
-        self.pca = None  # ADDED: For dimensionality reduction
+        self.pca = None
         
         self.emotion_labels = [
             'admiration', 'amusement', 'anger', 'annoyance', 'approval', 'caring',
@@ -49,11 +49,11 @@ class SimpleEmotionClassifiers:
         return weights_per_emotion
     
     def train_naive_bayes(self, X, y):
-        """FIXED: Train Naive Bayes with optimized PCA and GaussianNB for BERT embeddings"""
+        """Train Naive Bayes with optimized PCA and GaussianNB for BERT embeddings"""
         try:
             st.write("Training Naive Bayes with optimized PCA and Gaussian distribution...")
             
-            # FIXED: Optimize PCA components based on explained variance
+            # Optimize PCA components based on explained variance
             n_samples, n_features = X.shape
             
             # Choose PCA components more intelligently
@@ -73,9 +73,9 @@ class SimpleEmotionClassifiers:
             
             # Show PCA effectiveness
             explained_variance = self.pca.explained_variance_ratio_.sum()
-            st.info(f"📉 PCA: {n_features} → {optimal_components} features (keeping {explained_variance:.1%} variance)")
+            st.info(f"PCA: {n_features} → {optimal_components} features (keeping {explained_variance:.1%} variance)")
             
-            # FIXED: Use GaussianNB instead of MultinomialNB for continuous features
+            # Use GaussianNB instead of MultinomialNB for continuous features
             nb = GaussianNB(
                 var_smoothing=1e-8  # Small smoothing for numerical stability
             )
@@ -90,7 +90,7 @@ class SimpleEmotionClassifiers:
             
             self.nb_classifier = classifier
             
-            st.success(f"✅ Naive Bayes trained with optimized PCA + GaussianNB ({training_time:.1f}s)")
+            st.success(f"Naive Bayes trained with optimized PCA + GaussianNB ({training_time:.1f}s)")
             return True
             
         except Exception as e:
@@ -99,33 +99,33 @@ class SimpleEmotionClassifiers:
             return False
     
     def train_random_forest(self, X, y):
-        """FIXED: Train Random Forest with adaptive settings based on dataset size"""
+        """Train Random Forest with adaptive settings based on dataset size"""
         try:
             n_samples, n_features = X.shape
             st.write(f"Training Random Forest with adaptive settings for {n_samples:,} samples...")
             
-            # FIXED: Adaptive hyperparameters based on dataset size
+            # Adaptive hyperparameters based on dataset size
             if n_samples > 50000:
                 # Large dataset settings
-                n_estimators = 100  # Fewer trees for speed
+                n_estimators = 100
                 max_depth = 12
                 min_samples_split = 10
                 min_samples_leaf = 5
-                st.info("🔧 Using large dataset settings (faster training)")
+                st.info("Using large dataset settings (faster training)")
             elif n_samples > 10000:
                 # Medium dataset settings
                 n_estimators = 150
                 max_depth = 15
                 min_samples_split = 5
                 min_samples_leaf = 2
-                st.info("🔧 Using medium dataset settings (balanced)")
+                st.info("Using medium dataset settings (balanced)")
             else:
                 # Small dataset settings
-                n_estimators = 200  # More trees for better performance
+                n_estimators = 200
                 max_depth = 20
                 min_samples_split = 2
                 min_samples_leaf = 1
-                st.info("🔧 Using small dataset settings (higher performance)")
+                st.info("Using small dataset settings (higher performance)")
             
             # Create Random Forest with balanced class weights and optimized parameters
             rf = RandomForestClassifier(
@@ -133,14 +133,14 @@ class SimpleEmotionClassifiers:
                 max_depth=max_depth,
                 min_samples_split=min_samples_split,
                 min_samples_leaf=min_samples_leaf,
-                class_weight='balanced',   # 🎯 KEY: Handle class imbalance
+                class_weight='balanced',
                 random_state=42,
                 n_jobs=-1,
                 bootstrap=True,
-                max_features='sqrt',       # Good default for classification
-                criterion='gini',          # Better for imbalanced data
+                max_features='sqrt',
+                criterion='gini',
                 warm_start=False,
-                oob_score=True            # Out-of-bag score for validation
+                oob_score=True
             )
             
             # Use MultiOutputClassifier with balanced settings
@@ -153,15 +153,15 @@ class SimpleEmotionClassifiers:
             
             self.rf_classifier = classifier
             
-            # FIXED: Show OOB score if available
+            # Show OOB score if available
             try:
                 if hasattr(classifier.estimators_[0], 'oob_score_'):
                     avg_oob = np.mean([est.oob_score_ for est in classifier.estimators_])
-                    st.info(f"📊 Average OOB Score: {avg_oob:.3f} (higher is better)")
+                    st.info(f"Average OOB Score: {avg_oob:.3f} (higher is better)")
             except:
                 pass
             
-            st.success(f"✅ Random Forest trained with adaptive settings ({training_time:.1f}s)")
+            st.success(f"Random Forest trained with adaptive settings ({training_time:.1f}s)")
             return True
             
         except Exception as e:
@@ -170,7 +170,7 @@ class SimpleEmotionClassifiers:
             return False
     
     def predict_single_text(self, text, bert_embedder, model_type='random_forest', threshold=0.5):
-        """FIXED: Predict emotions with improved probability handling and error recovery"""
+        """Standard single text prediction"""
         try:
             # Generate embedding
             embedding = bert_embedder.get_single_embedding(text)
@@ -184,7 +184,7 @@ class SimpleEmotionClassifiers:
             # Make prediction with error handling
             try:
                 if model_type == 'naive_bayes' and self.nb_classifier:
-                    # FIXED: Apply PCA transformation for NB
+                    # Apply PCA transformation for NB
                     if self.pca is not None:
                         embedding = self.pca.transform(embedding)
                     probabilities = self.nb_classifier.predict_proba(embedding)
@@ -198,7 +198,7 @@ class SimpleEmotionClassifiers:
                 st.error(f"Prediction error: {str(pred_error)}")
                 return None
             
-            # FIXED: Handle MultiOutputClassifier probability format properly
+            # Handle MultiOutputClassifier probability format properly
             if isinstance(probabilities, list):
                 # Extract positive class probabilities
                 emotion_probs = []
@@ -215,7 +215,7 @@ class SimpleEmotionClassifiers:
             # Ensure we have the right number of probabilities
             probabilities = probabilities[:len(self.emotion_labels)]
             
-            # FIXED: Get top 3 emotions with proper confidence scores
+            # Get top 3 emotions with proper confidence scores
             top_3_indices = np.argsort(probabilities)[-3:][::-1]
             top_3_emotions = [self.emotion_labels[i] for i in top_3_indices]
             top_3_probabilities = [float(probabilities[i]) for i in top_3_indices]
@@ -234,8 +234,34 @@ class SimpleEmotionClassifiers:
             st.error(f"Error in single text prediction: {str(e)}")
             return None
     
+    def predict_single_text_with_attention(self, text, bert_embedder, model_type='random_forest', 
+                                         threshold=0.5, thresholds=None, return_attention=True):
+        """Enhanced single text prediction with attention weights"""
+        try:
+            # Get basic prediction first
+            basic_results = self.predict_single_text(text, bert_embedder, model_type, threshold)
+            if not basic_results:
+                return None
+            
+            # Add attention weights if requested
+            if return_attention:
+                try:
+                    # Get attention weights from BERT embedder
+                    attention_weights = bert_embedder.get_attention_weights(text, basic_results['top_3_emotions'][0])
+                    if attention_weights:
+                        basic_results['attention_weights'] = attention_weights
+                except Exception as e:
+                    # Graceful fallback if attention extraction fails
+                    basic_results['attention_weights'] = None
+            
+            return basic_results
+            
+        except Exception as e:
+            st.error(f"Error in enhanced single text prediction: {str(e)}")
+            return None
+    
     def predict_batch(self, df, bert_embedder, model_type='random_forest', threshold=0.3):
-        """FIXED: Predict emotions for batch with enhanced error handling and progress tracking"""
+        """Standard batch prediction"""
         try:
             if 'text' not in df.columns:
                 st.error("DataFrame must contain 'text' column")
@@ -251,10 +277,10 @@ class SimpleEmotionClassifiers:
             
             st.info(f"Processing {len(texts)} texts with {model_type.replace('_', ' ').title()}...")
             
-            # FIXED: Show memory estimate for large batches
+            # Show processing estimate for large batches
             if len(texts) > 10000:
-                memory_est = bert_embedder.estimate_memory_usage(len(texts))
-                st.warning(f"⚠️ Large batch: ~{memory_est['total_mb']:.0f}MB memory needed. {memory_est['recommendation']}")
+                processing_est = bert_embedder.estimate_processing_requirements(len(texts))
+                st.info(f"Large batch: {processing_est['recommendation']}")
             
             # Generate embeddings for all texts
             embeddings = bert_embedder.generate_embeddings(texts)
@@ -270,7 +296,7 @@ class SimpleEmotionClassifiers:
                 status_text.text("Making predictions...")
                 
                 if model_type == 'naive_bayes' and self.nb_classifier:
-                    # FIXED: Apply PCA transformation for NB
+                    # Apply PCA transformation for NB
                     if self.pca is not None:
                         status_text.text("Applying PCA transformation...")
                         embeddings = self.pca.transform(embeddings)
@@ -287,7 +313,7 @@ class SimpleEmotionClassifiers:
                 st.error(f"Prediction error: {str(e)}")
                 return None
             
-            # FIXED: Process predictions properly with error handling
+            # Process predictions properly with error handling
             results = []
             
             try:
@@ -351,7 +377,7 @@ class SimpleEmotionClassifiers:
                         continue
                 
                 progress_bar.progress(1.0)
-                status_text.text(f"✅ Completed: {successful_predictions}/{len(texts)} successful predictions")
+                status_text.text(f"Completed: {successful_predictions}/{len(texts)} successful predictions")
                 
             except Exception as e:
                 st.error(f"Error processing batch results: {str(e)}")
@@ -366,7 +392,7 @@ class SimpleEmotionClassifiers:
             
             # Show emotion distribution with enhanced statistics
             emotion_dist = results_df['top_emotion'].value_counts()
-            st.subheader("🎭 Predicted Emotion Distribution")
+            st.subheader("Predicted Emotion Distribution")
             
             col1, col2, col3, col4 = st.columns(4)
             with col1:
@@ -386,17 +412,17 @@ class SimpleEmotionClassifiers:
                 st.metric("Success Rate", f"{success_rate:.1f}%")
             
             # Show top emotions with better formatting
-            st.write("**🏆 Top 5 Predicted Emotions:**")
+            st.write("**Top 5 Predicted Emotions:**")
             top_5_emotions = emotion_dist.head(5)
             for emotion, count in top_5_emotions.items():
                 pct = (count / len(results_df)) * 100
                 st.write(f"   • **{emotion.title()}**: {count:,} samples ({pct:.1f}%)")
             
-            # FIXED: Add quality assessment
+            # Add processing quality note
             if avg_confidence < 0.5:
-                st.warning("⚠️ Low average confidence detected. Consider retraining or checking data quality.")
+                st.info("Consider adjusting prediction thresholds for better results.")
             elif avg_confidence > 0.8:
-                st.success("✅ High confidence predictions - model is performing well!")
+                st.success("High confidence predictions achieved!")
             
             return results_df
             
@@ -405,8 +431,30 @@ class SimpleEmotionClassifiers:
             st.exception(e)
             return None
     
+    def predict_batch_with_trajectory(self, df, bert_embedder, model_type='random_forest', 
+                                    threshold=0.3, thresholds=None):
+        """Enhanced batch prediction with trajectory tracking"""
+        try:
+            # Get basic batch prediction
+            results_df = self.predict_batch(df, bert_embedder, model_type, threshold)
+            if results_df is None:
+                return None
+            
+            # Add trajectory index for time-series analysis
+            results_df['trajectory_index'] = range(len(results_df))
+            
+            # Add timestamp if not present
+            if 'timestamp' not in results_df.columns:
+                results_df['timestamp'] = pd.date_range(start='2024-01-01', periods=len(results_df), freq='H')
+            
+            return results_df
+            
+        except Exception as e:
+            st.error(f"Error in enhanced batch prediction: {str(e)}")
+            return None
+    
     def save_model_components(self, dataset_name="demo"):
-        """FIXED: Save individual model components using joblib for better compatibility"""
+        """Save individual model components using joblib for better compatibility"""
         try:
             cache_dir = "demo_cache/"
             os.makedirs(cache_dir, exist_ok=True)
@@ -437,7 +485,7 @@ class SimpleEmotionClassifiers:
             return False, []
     
     def load_model_components(self, dataset_name="demo"):
-        """FIXED: Load individual model components using joblib"""
+        """Load individual model components using joblib"""
         try:
             cache_dir = "demo_cache/"
             loaded_components = []
