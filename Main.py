@@ -1,3 +1,12 @@
+# Force CPU on Streamlit Cloud
+import os, torch
+os.environ["HF_HOME"] = "/app/.cache/huggingface"  # stable cache path
+device = "cpu"
+
+# Make sure wordnet is available (runs once in container)
+import nltk
+nltk.download('wordnet')
+
 import streamlit as st
 import pandas as pd
 import numpy as np
